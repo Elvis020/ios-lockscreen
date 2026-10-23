@@ -39,7 +39,18 @@ The repository does not create or change Telegram webhooks automatically.
 
 ## Commands
 
+Register the command menu once after creating the bot:
+
+```bash
+npm run telegram:configure-commands
+```
+
+This command requires Node.js 22.18 or newer. The script reads `TELEGRAM_BOT_TOKEN` from `.env`, registers commands only for private chats, and verifies the saved list without printing the token. Telegram stores the menu, so normal deployments do not need to run this command again.
+
+Typing `/` in the bot chat will then show autocomplete for:
+
 ```text
+/help
 /status
 /url
 /add YYYY-MM-DD Event name
@@ -53,6 +64,8 @@ The repository does not create or change Telegram webhooks automatically.
 /theme custom delete name
 /sync
 ```
+
+`/start` is intentionally omitted from autocomplete because it is only used by the dashboard's single-use account-link URL.
 
 Custom theme names must begin with a letter and may contain lowercase letters, numbers, or hyphens. Every color must use the `#RRGGBB` format. Each account may save up to five custom themes.
 

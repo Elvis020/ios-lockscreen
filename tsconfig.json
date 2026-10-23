@@ -11,6 +11,7 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "noEmit": true,
     "baseUrl": ".",
@@ -18,6 +19,6 @@
       "@/lib/*": ["lib/*"]
     }
   },
-  "include": ["api/**/*", "lib/**/*", "tests/**/*"],
+  "include": ["api/**/*", "lib/**/*", "scripts/**/*", "tests/**/*"],
   "exclude": ["node_modules"]
 }
