@@ -81,6 +81,19 @@ describe('token manager serialization', () => {
     expect(results.filter((result) => 'error' in result)).toEqual([
       { error: 'Invite code has reached maximum uses' },
     ]);
+
+    const created = results.find((result) => 'token' in result);
+
+    if (!created || !('token' in created)) {
+      throw new Error('Expected a created user');
+    }
+
+    expect(await tokenManager.getUser(created.token)).toMatchObject({
+      schemaVersion: 3,
+      timeRange: 'month',
+      presentation: 'hybrid',
+      lockScreenProfile: 'standard',
+    });
   });
 
   it('keeps the stable account id when Google credentials are refreshed', async () => {

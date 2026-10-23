@@ -191,6 +191,13 @@ export default function handler() {
       font-weight: 650;
     }
 
+    .setting-help {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
     .url {
       padding: 12px;
       border-radius: 8px;
@@ -265,7 +272,7 @@ export default function handler() {
       <div>
         <div class="eyebrow">iPhone shortcut wallpaper</div>
         <h1>Calendar Lockscreen</h1>
-        <p class="muted" style="margin-top: 14px; max-width: 620px;">Choose a period, theme, and events here or through Telegram. Changes appear the next time your iOS Shortcut fetches the wallpaper.</p>
+        <p class="muted" style="margin-top: 14px; max-width: 620px;">Choose a time range, presentation, theme, and events here or through Telegram. Changes appear the next time your iOS Shortcut fetches the wallpaper.</p>
       </div>
       <button id="logoutButton" class="button danger hidden" type="button">Log out</button>
     </header>
@@ -321,12 +328,22 @@ export default function handler() {
         <div class="card">
           <h2>Wallpaper settings</h2>
           <div style="margin-top: 18px;">
-            <h3>View</h3>
-            <select id="viewMode">
-              <option value="week">Week</option>
-              <option value="month">Month</option>
-              <option value="quarter">Quarter</option>
-            </select>
+            <h3>Preset</h3>
+            <select id="wallpaperPreset"></select>
+            <p class="setting-help">Start with a composed view, then fine-tune its range and layout below.</p>
+          </div>
+          <div style="margin-top: 16px;">
+            <h3>Time range</h3>
+            <select id="timeRange"></select>
+          </div>
+          <div style="margin-top: 16px;">
+            <h3>Presentation</h3>
+            <select id="presentation"></select>
+          </div>
+          <div style="margin-top: 16px;">
+            <h3>Lock-screen fit</h3>
+            <select id="lockScreenProfile"></select>
+            <p class="setting-help">Lock screens vary. Preview on your phone; Large clock reserves more space above without moving into notifications.</p>
           </div>
           <div style="margin-top: 16px;">
             <h3>Theme</h3>
@@ -358,7 +375,7 @@ export default function handler() {
 
         <div class="card">
           <h2>Telegram</h2>
-          <p id="telegramStatus" class="muted" aria-live="polite">Link the bot, then add events and switch view, theme, or time zone by command.</p>
+          <p id="telegramStatus" class="muted" aria-live="polite">Link the bot, then manage events, presets, layout, theme, or time zone by command.</p>
           <button id="telegramButton" class="button full" type="button" style="margin-top: 16px;">Link Telegram</button>
         </div>
       </aside>
@@ -394,6 +411,7 @@ export default function handler() {
     let authSessionId = 0;
     let wallpaperUrl = '';
     let telegramLinked = false;
+    let wallpaperPresets = [];
     let telegramPollTimer = null;
     let telegramPollDeadline = 0;
 
@@ -536,7 +554,7 @@ export default function handler() {
         return;
       }
 
-      byId('viewMode').value = settings.viewMode;
+      renderWallpaperOptions(settings);
       byId('timeZone').value = settings.timeZone;
       byId('theme').innerHTML = '';
 
@@ -556,13 +574,108 @@ export default function handler() {
       await loadGoogle();
     }
 
+    function renderWallpaperOptions(settings) {
+      const options = settings.wallpaperOptions || {
+        timeRanges: ['week', 'month', 'quarter', 'rolling14', 'year'],
+        presentations: ['calendar', 'agenda', 'countdown', 'progress', 'hybrid', 'minimal'],
+        lockScreenProfiles: ['standard', 'large-clock'],
+        presets: [],
+      };
+
+      wallpaperPresets = options.presets || [];
+      populateSelect(
+        'timeRange',
+        options.timeRanges,
+        (value) => optionLabel(value),
+      );
+      populateSelect(
+        'presentation',
+        options.presentations,
+        (value) => optionLabel(value),
+      );
+      populateSelect(
+        'lockScreenProfile',
+        options.lockScreenProfiles,
+        (value) => optionLabel(value),
+      );
+
+      const presetSelect = byId('wallpaperPreset');
+
+      presetSelect.innerHTML = '';
+
+      const customOption = document.createElement('option');
+
+      customOption.value = 'custom';
+      customOption.textContent = 'Custom selection';
+      presetSelect.appendChild(customOption);
+
+      wallpaperPresets.forEach((preset) => {
+        const option = document.createElement('option');
+
+        option.value = preset.id;
+        option.textContent = preset.label;
+        presetSelect.appendChild(option);
+      });
+
+      byId('timeRange').value = settings.timeRange || settings.viewMode || 'quarter';
+      byId('presentation').value = settings.presentation || 'calendar';
+      byId('lockScreenProfile').value = settings.lockScreenProfile || 'standard';
+      syncPresetSelection();
+    }
+
+    function populateSelect(id, values, label) {
+      const select = byId(id);
+
+      select.innerHTML = '';
+
+      values.forEach((value) => {
+        const option = document.createElement('option');
+
+        option.value = value;
+        option.textContent = label(value);
+        select.appendChild(option);
+      });
+    }
+
+    function optionLabel(value) {
+      const labels = {
+        rolling14: 'Rolling 14 days',
+        'large-clock': 'Large clock',
+      };
+
+      return labels[value] || value.charAt(0).toUpperCase() + value.slice(1);
+    }
+
+    function applyPresetSelection() {
+      const preset = wallpaperPresets.find(
+        (candidate) => candidate.id === byId('wallpaperPreset').value,
+      );
+
+      if (!preset) {
+        return;
+      }
+
+      byId('timeRange').value = preset.timeRange;
+      byId('presentation').value = preset.presentation;
+    }
+
+    function syncPresetSelection() {
+      const preset = wallpaperPresets.find(
+        (candidate) =>
+          candidate.timeRange === byId('timeRange').value &&
+          candidate.presentation === byId('presentation').value,
+      );
+
+      byId('wallpaperPreset').value = preset ? preset.id : 'custom';
+    }
+
     function renderTelegramStatus(linked) {
       const button = byId('telegramButton');
 
       telegramLinked = Boolean(linked);
       byId('telegramStatus').textContent = telegramLinked
-        ? 'Connected. Use the bot to manage events, view, theme, or time zone. Relink only to change Telegram accounts.'
-        : 'Link the bot, then add events and switch view, theme, or time zone by command.';
+        ? 'Connected. Use the bot to manage events, presets, layout, theme, or time zone. Relink only to change Telegram accounts.'
+        : 'Link the bot, then manage events, presets, layout, theme, or time zone by command.';
       button.textContent = telegramLinked ? 'Relink Telegram' : 'Link Telegram';
       button.classList.toggle('secondary', telegramLinked);
     }
@@ -702,7 +815,9 @@ export default function handler() {
         await api('/api/settings', {
           method: 'PATCH',
           body: JSON.stringify({
-            viewMode: byId('viewMode').value,
+            timeRange: byId('timeRange').value,
+            presentation: byId('presentation').value,
+            lockScreenProfile: byId('lockScreenProfile').value,
             theme: byId('theme').value,
             timeZone: byId('timeZone').value.trim(),
           }),
@@ -850,6 +965,9 @@ export default function handler() {
     });
     byId('addEventButton').addEventListener('click', addEvent);
     byId('saveSettingsButton').addEventListener('click', saveSettings);
+    byId('wallpaperPreset').addEventListener('change', applyPresetSelection);
+    byId('timeRange').addEventListener('change', syncPresetSelection);
+    byId('presentation').addEventListener('change', syncPresetSelection);
     byId('googleConnectButton').addEventListener('click', connectGoogle);
     byId('googleSyncButton').addEventListener('click', syncGoogle);
     byId('saveGoogleButton').addEventListener('click', saveGoogleSelection);

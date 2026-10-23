@@ -10,7 +10,7 @@ People who want their current calendar and important dates visible on an iPhone 
 
 ## Product Purpose
 
-Calendar Lockscreen turns week, month, or quarter progress and upcoming events into a live iPhone wallpaper. Success means users can understand their current setup, make a change quickly, and trust that the dashboard, Telegram bot, calendar data, and next wallpaper refresh stay in sync.
+Calendar Lockscreen turns calendar ranges, truthful period progress, and upcoming-event countdowns into a live iPhone wallpaper. Success means users can understand their current preset, range, presentation, and lock-screen fit, make a change quickly, and trust that the dashboard, Telegram bot, calendar data, and next wallpaper refresh stay in sync.
 
 ## Brand Personality
 
@@ -27,6 +27,8 @@ Avoid noisy chatbot prose, decorative emoji overload, long unstructured status d
 - Keep commands and outcomes consistent across Telegram and the dashboard.
 - Separate setup or recovery details from everyday use.
 - Make synchronization state and delayed wallpaper updates explicit without repeating them everywhere.
+- Treat lock-screen spacing as user-calibrated: reserve conservative clock/widget and notification regions, but never claim one pixel-safe layout fits every device.
+- Keep content anchors stable as event counts change, and reveal overflow rather than compressing text into unsafe regions.
 
 ## Accessibility & Inclusion
 

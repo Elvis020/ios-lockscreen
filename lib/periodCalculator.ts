@@ -1,9 +1,10 @@
-import type { ViewMode } from './preferences';
+import type { TimeRange } from './preferences';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface PeriodInfo {
-  mode: ViewMode;
+  mode: TimeRange;
+  kind: 'fixed' | 'rolling';
   title: string;
   startDate: string;
   endDate: string;
@@ -16,7 +17,7 @@ export interface PeriodInfo {
 
 export function getPeriodInfo(
   date: Date = new Date(),
-  mode: ViewMode = 'quarter',
+  mode: TimeRange = 'quarter',
   timeZone = 'UTC',
 ): PeriodInfo {
   const current = getZonedDate(date, timeZone);
@@ -37,13 +38,21 @@ export function getPeriodInfo(
       year: 'numeric',
       timeZone: 'UTC',
     }).format(startUtc);
-  } else {
+  } else if (mode === 'quarter') {
     const quarter = Math.floor((current.month - 1) / 3) + 1;
     const startMonth = (quarter - 1) * 3 + 1;
 
     startUtc = civilToUtc(current.year, startMonth, 1);
     endUtc = civilToUtc(current.year, startMonth + 3, 0);
     title = `Q${quarter} ${current.year}`;
+  } else if (mode === 'rolling14') {
+    startUtc = currentUtc;
+    endUtc = addDays(startUtc, 13);
+    title = 'Next 14 days';
+  } else {
+    startUtc = civilToUtc(current.year, 1, 1);
+    endUtc = civilToUtc(current.year, 12, 31);
+    title = String(current.year);
   }
 
   const totalDays = diffDays(startUtc, endUtc) + 1;
@@ -51,6 +60,7 @@ export function getPeriodInfo(
 
   return {
     mode,
+    kind: mode === 'rolling14' ? 'rolling' : 'fixed',
     title,
     startDate: formatDate(startUtc),
     endDate: formatDate(endUtc),
@@ -58,7 +68,8 @@ export function getPeriodInfo(
     currentDay,
     totalDays,
     daysLeft: totalDays - currentDay,
-    percentComplete: Math.round((currentDay / totalDays) * 100),
+    percentComplete:
+      mode === 'rolling14' ? 0 : Math.round((currentDay / totalDays) * 100),
   };
 }
 

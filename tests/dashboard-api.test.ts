@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import handler from '../api/index';
+import { WALLPAPER_PRESETS } from '../lib/preferences';
 
 function createElementStub() {
   const classes = new Set<string>();
@@ -34,6 +35,11 @@ async function createDashboardHarness(fetchImplementation: typeof fetch) {
   const documentListeners = new Map<string, () => void>();
   const storage = new Map<string, string>();
   const openedUrls: string[] = [];
+
+  for (const [, id] of html.matchAll(/id="([^"]+)"/g)) {
+    elements.set(id, createElementStub());
+  }
+
   const documentStub = {
     visibilityState: 'visible',
     getElementById: (id: string) => {
@@ -69,6 +75,10 @@ async function createDashboardHarness(fetchImplementation: typeof fetch) {
           authSessionId += 1;
         },
         loadDashboard,
+        renderWallpaperOptions,
+        applyPresetSelection,
+        syncPresetSelection,
+        saveSettings,
         refreshTelegramStatus,
         linkTelegram,
         logout,
@@ -94,6 +104,10 @@ async function createDashboardHarness(fetchImplementation: typeof fetch) {
   ) as {
     setTokenForTest: (value: string) => void;
     loadDashboard: () => Promise<void>;
+    renderWallpaperOptions: (settings: Record<string, unknown>) => void;
+    applyPresetSelection: () => void;
+    syncPresetSelection: () => void;
+    saveSettings: () => Promise<void>;
     refreshTelegramStatus: () => Promise<boolean | null>;
     linkTelegram: () => Promise<void>;
     logout: (message: string) => void;
@@ -137,11 +151,74 @@ describe('dashboard API', () => {
     expect(html).toContain("document.addEventListener('visibilitychange'");
   });
 
+  it('exposes presets, independent wallpaper dimensions, and calibration guidance', async () => {
+    const html = await handler().text();
+
+    expect(html).toContain('id="wallpaperPreset"');
+    expect(html).toContain('id="timeRange"');
+    expect(html).toContain('id="presentation"');
+    expect(html).toContain('id="lockScreenProfile"');
+    expect(html).toContain('Lock screens vary. Preview on your phone');
+    expect(html).toContain("timeRange: byId('timeRange').value");
+    expect(html).toContain("presentation: byId('presentation').value");
+  });
+
+  it('applies a preset and saves independent dimensions with the selected profile', async () => {
+    let savedBody: Record<string, unknown> | undefined;
+    const fetchImplementation = async (_input: RequestInfo | URL, init?: RequestInit) => {
+      savedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+
+      return Response.json({});
+    };
+    const { controls, elements } = await createDashboardHarness(fetchImplementation);
+
+    controls.setTokenForTest('current-token');
+    controls.renderWallpaperOptions({
+      timeRange: 'quarter',
+      presentation: 'calendar',
+      lockScreenProfile: 'large-clock',
+      wallpaperOptions: {
+        timeRanges: ['week', 'month', 'quarter', 'rolling14', 'year'],
+        presentations: [
+          'calendar',
+          'agenda',
+          'countdown',
+          'progress',
+          'hybrid',
+          'minimal',
+        ],
+        lockScreenProfiles: ['standard', 'large-clock'],
+        presets: Object.values(WALLPAPER_PRESETS),
+      },
+    });
+    elements.get('wallpaperPreset')!.value = 'hybrid';
+    elements.get('theme')!.value = 'default';
+    elements.get('timeZone')!.value = 'Africa/Accra';
+    controls.applyPresetSelection();
+    await controls.saveSettings();
+
+    expect(savedBody).toEqual({
+      timeRange: 'month',
+      presentation: 'hybrid',
+      lockScreenProfile: 'large-clock',
+      theme: 'default',
+      timeZone: 'Africa/Accra',
+    });
+
+    elements.get('timeRange')!.value = 'year';
+    elements.get('presentation')!.value = 'agenda';
+    controls.syncPresetSelection();
+
+    expect(elements.get('wallpaperPreset')!.value).toBe('custom');
+  });
+
   it('renders a linked Telegram account during the initial dashboard load', async () => {
     const fetchImplementation = async (input: RequestInfo | URL) => {
       const responses: Record<string, unknown> = {
         '/api/settings': {
-          viewMode: 'month',
+          timeRange: 'month',
+          presentation: 'hybrid',
+          lockScreenProfile: 'large-clock',
           timeZone: 'UTC',
           themes: ['midnight'],
           theme: 'midnight',
@@ -165,6 +242,9 @@ describe('dashboard API', () => {
 
     expect(elements.get('telegramButton')?.textContent).toBe('Relink Telegram');
     expect(elements.get('telegramStatus')?.textContent).toContain('Connected.');
+    expect(elements.get('timeRange')?.value).toBe('month');
+    expect(elements.get('presentation')?.value).toBe('hybrid');
+    expect(elements.get('lockScreenProfile')?.value).toBe('large-clock');
   });
 
   it('discards an initial dashboard response after switching accounts', async () => {

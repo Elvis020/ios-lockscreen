@@ -1,6 +1,6 @@
 # Telegram bot setup
 
-The Telegram bot can link an existing Calendar Lockscreen account, manage events, switch views, change themes, and refresh Google Calendar data.
+The Telegram bot can link an existing Calendar Lockscreen account, manage events, choose presets or independent wallpaper dimensions, change themes, and refresh Google Calendar data.
 
 ## 1. Create the bot
 
@@ -56,7 +56,10 @@ Typing `/` in the bot chat will then show autocomplete for:
 /add YYYY-MM-DD Event name
 /events
 /delete NUMBER
-/view week|month|quarter
+/view week|month|quarter|agenda|rolling14|countdown|year|hybrid|minimal
+/range week|month|quarter|rolling14|year
+/layout calendar|agenda|countdown|progress|hybrid|minimal
+/profile standard|large-clock
 /timezone Area/City
 /theme list
 /theme NAME
@@ -71,6 +74,8 @@ scan.
 
 `/url` deliberately returns the full wallpaper URL as plain, copyable text. Use this
 version when configuring the iOS Shortcut or anywhere else that needs the raw URL.
+
+`/view` applies one of the nine shared presets. `/range` and `/layout` then let you change those dimensions independently; every range and layout combination is supported. `/profile` calibrates the vertical content band. `large-clock` reserves more room above while keeping content above the notification region. Preview the result on the target phone because iOS lock-screen spacing and crop/zoom behavior vary.
 
 `/start` is intentionally omitted from autocomplete because it is only used by the dashboard's single-use account-link URL.
 

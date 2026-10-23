@@ -6,7 +6,7 @@ Calendar Lockscreen runs as Vercel Edge functions and uses Redis as the shared s
 
 1. The dashboard, Telegram bot, or Google sync updates the user's Redis record.
 2. The wallpaper endpoint reads that shared record.
-3. The renderer creates the current week, month, or quarter image.
+3. The renderer creates the selected time range and presentation inside a calibrated lock-screen content band.
 4. An iOS Shortcut fetches the image and applies it to the phone.
 
 The application cannot force iOS to refresh a wallpaper. Run the Shortcut manually or with an iOS automation after changing settings.
@@ -21,7 +21,9 @@ The application cannot force iOS to refresh a wallpaper. Run the Shortcut manual
 
 ## Concurrency and compatibility
 
-Existing user records normalize to quarter view, the default theme, and `UTC`. A read-only wallpaper key is created when a legacy account next uses a management API; existing Redis keys are not renamed.
+Existing user records preserve their stored week, month, or quarter and normalize to the calendar presentation with the standard lock-screen profile. New accounts start with the month-and-next-events hybrid preset. A read-only wallpaper key is created when a legacy account next uses a management API; existing Redis keys are not renamed.
+
+The schema stores `timeRange`, `presentation`, and `lockScreenProfile` separately. The nine named presets are shared mappings over those dimensions, so users may start from a preset and still tune range or presentation independently. Legacy `viewMode` settings and `/view` clients remain accepted at the API boundary.
 
 Per-user mutations use short-lived owner locks with atomic commit-time lease fencing. An expired lock holder therefore cannot overwrite a newer update from the dashboard, Telegram, or Google Calendar.
 
@@ -34,5 +36,11 @@ Per-user mutations use short-lived owner locks with atomic commit-time lease fen
 - Personalized wallpaper responses are private and not cached.
 - The public fallback wallpaper may use a one-hour CDN cache.
 - Errors returned to clients avoid exposing internal details.
+
+## Lock-screen layout calibration
+
+Wallpaper generation remains fixed at 1284×2778 for compatibility. The standard profile reserves roughly the top third for the clock and widgets and the bottom quarter for notifications. The large-clock profile moves the content start lower while retaining the same conservative bottom boundary.
+
+These positions are calibration defaults, not device detection or universal safe-area claims. iOS can crop or zoom a wallpaper after download, and clock, widget, text-size, and notification choices vary. Use the generated mock-overlay previews as a first check, then verify the raw PNG on the actual target lock screen. Wallpaper settings also appear only after the iOS Shortcut fetches a fresh image; the application cannot force that refresh.
 
 The temporary invite-admin endpoint remains available for initial setup. Keep `ADMIN_INVITE_SECRET` private and remove the endpoint when setup is complete.

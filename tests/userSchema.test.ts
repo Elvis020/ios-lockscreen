@@ -14,9 +14,11 @@ describe('normalizeUserData', () => {
     );
 
     expect(user).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       token: 'legacy-token',
-      viewMode: 'quarter',
+      timeRange: 'quarter',
+      presentation: 'calendar',
+      lockScreenProfile: 'standard',
       timeZone: 'UTC',
       wallpaperKey: undefined,
     });
@@ -27,5 +29,37 @@ describe('normalizeUserData', () => {
     });
     expect(user?.selectedEventIds).toEqual([]);
     expect(user?.customThemes).toEqual([]);
+  });
+
+  it('preserves a legacy account period while accepting v3 wallpaper settings', () => {
+    expect(
+      normalizeUserData(
+        {
+          token: 'legacy-month',
+          viewMode: 'month',
+        },
+        'legacy-month',
+      ),
+    ).toMatchObject({
+      timeRange: 'month',
+      presentation: 'calendar',
+      lockScreenProfile: 'standard',
+    });
+
+    expect(
+      normalizeUserData(
+        {
+          token: 'current',
+          timeRange: 'year',
+          presentation: 'progress',
+          lockScreenProfile: 'large-clock',
+        },
+        'current',
+      ),
+    ).toMatchObject({
+      timeRange: 'year',
+      presentation: 'progress',
+      lockScreenProfile: 'large-clock',
+    });
   });
 });

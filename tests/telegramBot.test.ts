@@ -40,7 +40,10 @@ describe('Telegram commands', () => {
     expect(help).toContain('<b>Events</b>');
     expect(help).toContain('<b>Appearance</b>');
     expect(help).toContain('<b>Calendar</b>');
-    expect(help).toContain('/view week|month|quarter');
+    expect(help).toContain('/view week|month|quarter|agenda|rolling14');
+    expect(help).toContain('/range week|month|quarter|rolling14|year');
+    expect(help).toContain('/layout calendar|agenda|countdown|progress|hybrid|minimal');
+    expect(help).toContain('/profile standard|large-clock');
     expect(help).toContain('/timezone Area/City');
     expect(help).toContain('/theme custom add');
     expect(help).toContain('/sync');
@@ -84,6 +87,9 @@ describe('Telegram commands', () => {
 
     expect(body.parse_mode).toBe('HTML');
     expect(body.text).toContain('<b>Wallpaper status</b>');
+    expect(body.text).toContain('Range: <b>quarter</b>');
+    expect(body.text).toContain('Layout: <b>calendar</b>');
+    expect(body.text).toContain('Lock-screen fit: <b>standard</b>');
     expect(body.text).toContain('Events: <b>1 manual</b> · <b>2 Google cached</b>');
     expect(body.text).not.toContain(wallpaperUrl);
     expect(body.reply_markup).toEqual({
@@ -174,6 +180,31 @@ describe('Telegram commands', () => {
     expect(deliveryBody(0).text).not.toContain('Maximum 7 tracked events allowed');
   });
 
+  it('updates presets and independent wallpaper dimensions', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+
+    await processTelegramUpdate(telegramUpdate('/view hybrid'), 'https://example.com');
+    await processTelegramUpdate(telegramUpdate('/range year'), 'https://example.com');
+    await processTelegramUpdate(
+      telegramUpdate('/layout progress'),
+      'https://example.com',
+    );
+    await processTelegramUpdate(
+      telegramUpdate('/profile large-clock'),
+      'https://example.com',
+    );
+
+    expect(await getUser('owner')).toMatchObject({
+      timeRange: 'year',
+      presentation: 'progress',
+      lockScreenProfile: 'large-clock',
+    });
+    expect(deliveryBody(0).text).toContain('Preset updated');
+    expect(deliveryBody(3).text).toContain('Preview it on your phone');
+  });
+
   it('keeps a completed custom theme deletion idempotent on replay', async () => {
     await seedLinkedUser({
       customThemes: [
@@ -233,11 +264,13 @@ async function seedLinkedUser(overrides: Partial<UserData> = {}): Promise<void> 
 
 function userRecord(): UserData {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     token: 'owner',
     name: 'Ada',
     theme: 'default',
-    viewMode: 'quarter',
+    timeRange: 'quarter',
+    presentation: 'calendar',
+    lockScreenProfile: 'standard',
     timeZone: 'UTC',
     customThemes: [],
     events: [],

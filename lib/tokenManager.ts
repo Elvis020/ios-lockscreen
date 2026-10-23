@@ -58,12 +58,14 @@ export async function createUser(
     const token = generateUUID();
     const wallpaperKey = generateUUID();
     const userData: UserData = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       token,
       wallpaperKey,
       name: name.trim(),
       theme: 'default',
-      viewMode: 'quarter',
+      timeRange: 'month',
+      presentation: 'hybrid',
+      lockScreenProfile: 'standard',
       timeZone,
       customThemes: [],
       events: [],
@@ -206,7 +208,12 @@ export async function deleteManualEventAtIndex(
 
 export async function updatePreferences(
   token: string,
-  preferences: Partial<Pick<UserData, 'theme' | 'viewMode' | 'timeZone'>>,
+  preferences: Partial<
+    Pick<
+      UserData,
+      'theme' | 'timeRange' | 'presentation' | 'lockScreenProfile' | 'timeZone'
+    >
+  >,
   completion?: MutationCompletion,
 ): Promise<UserData | null> {
   return mutateUser(
@@ -220,8 +227,16 @@ export async function updatePreferences(
         user.theme = preferences.theme;
       }
 
-      if (preferences.viewMode) {
-        user.viewMode = preferences.viewMode;
+      if (preferences.timeRange) {
+        user.timeRange = preferences.timeRange;
+      }
+
+      if (preferences.presentation) {
+        user.presentation = preferences.presentation;
+      }
+
+      if (preferences.lockScreenProfile) {
+        user.lockScreenProfile = preferences.lockScreenProfile;
       }
 
       if (preferences.timeZone) {

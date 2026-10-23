@@ -1,5 +1,14 @@
 import { syncGoogleEvents } from './calendar/service';
-import { BUILT_IN_THEMES, isViewMode, listAvailableThemeIds } from './preferences';
+import {
+  BUILT_IN_THEMES,
+  isLockScreenProfile,
+  isPresentation,
+  isTimeRange,
+  isWallpaperPreset,
+  listAvailableThemeIds,
+  WALLPAPER_PRESET_IDS,
+  WALLPAPER_PRESETS,
+} from './preferences';
 import { getRedis } from './redis';
 import { deleteRedisKeyIfValue } from './redisLock';
 import {
@@ -296,7 +305,9 @@ async function runLinkedTelegramCommand(
           [
             '<b>Wallpaper status</b>',
             '',
-            `View: <b>${escapeTelegramHtml(result.user.viewMode)}</b>`,
+            `Range: <b>${escapeTelegramHtml(result.user.timeRange)}</b>`,
+            `Layout: <b>${escapeTelegramHtml(result.user.presentation)}</b>`,
+            `Lock-screen fit: <b>${escapeTelegramHtml(result.user.lockScreenProfile)}</b>`,
             `Theme: <b>${escapeTelegramHtml(result.user.theme)}</b>`,
             `Time zone: <b>${escapeTelegramHtml(result.user.timeZone)}</b>`,
             `Events: <b>${result.user.events.length} manual</b> · <b>${result.user.cachedCalEvents.length} Google cached</b>`,
@@ -399,20 +410,102 @@ async function runLinkedTelegramCommand(
   }
 
   if (command === '/view') {
-    if (!isViewMode(args[0])) {
+    if (!isWallpaperPreset(args[0])) {
       return {
-        reply: usageReply('Choose a view', '/view week|month|quarter'),
+        reply: usageReply('Choose a preset', `/view ${WALLPAPER_PRESET_IDS.join('|')}`),
         completionCommitted: false,
       };
     }
 
-    await updatePreferences(token, { viewMode: args[0] }, completion);
+    const preset = WALLPAPER_PRESETS[args[0]];
+
+    await updatePreferences(
+      token,
+      {
+        timeRange: preset.timeRange,
+        presentation: preset.presentation,
+      },
+      completion,
+    );
 
     return {
       reply: htmlReply(
         [
-          '✓ <b>View updated</b>',
+          '✓ <b>Preset updated</b>',
+          escapeTelegramHtml(preset.label),
+          WALLPAPER_REFRESH_NOTE,
+        ].join('\n'),
+      ),
+      completionCommitted: Boolean(completion),
+    };
+  }
+
+  if (command === '/range') {
+    if (!isTimeRange(args[0])) {
+      return {
+        reply: usageReply(
+          'Choose a time range',
+          '/range week|month|quarter|rolling14|year',
+        ),
+        completionCommitted: false,
+      };
+    }
+
+    await updatePreferences(token, { timeRange: args[0] }, completion);
+
+    return {
+      reply: htmlReply(
+        [
+          '✓ <b>Time range updated</b>',
           escapeTelegramHtml(args[0]),
+          WALLPAPER_REFRESH_NOTE,
+        ].join('\n'),
+      ),
+      completionCommitted: Boolean(completion),
+    };
+  }
+
+  if (command === '/layout') {
+    if (!isPresentation(args[0])) {
+      return {
+        reply: usageReply(
+          'Choose a presentation',
+          '/layout calendar|agenda|countdown|progress|hybrid|minimal',
+        ),
+        completionCommitted: false,
+      };
+    }
+
+    await updatePreferences(token, { presentation: args[0] }, completion);
+
+    return {
+      reply: htmlReply(
+        [
+          '✓ <b>Presentation updated</b>',
+          escapeTelegramHtml(args[0]),
+          WALLPAPER_REFRESH_NOTE,
+        ].join('\n'),
+      ),
+      completionCommitted: Boolean(completion),
+    };
+  }
+
+  if (command === '/profile') {
+    if (!isLockScreenProfile(args[0])) {
+      return {
+        reply: usageReply('Choose a lock-screen fit', '/profile standard|large-clock'),
+        completionCommitted: false,
+      };
+    }
+
+    await updatePreferences(token, { lockScreenProfile: args[0] }, completion);
+
+    return {
+      reply: htmlReply(
+        [
+          '✓ <b>Lock-screen fit updated</b>',
+          escapeTelegramHtml(args[0]),
+          'Preview it on your phone; iOS lock-screen spacing varies.',
           WALLPAPER_REFRESH_NOTE,
         ].join('\n'),
       ),
@@ -624,7 +717,10 @@ function helpText(): string {
     '<code>/delete NUMBER</code>',
     '',
     '<b>Appearance</b>',
-    '<code>/view week|month|quarter</code>',
+    `<code>/view ${WALLPAPER_PRESET_IDS.join('|')}</code>`,
+    '<code>/range week|month|quarter|rolling14|year</code>',
+    '<code>/layout calendar|agenda|countdown|progress|hybrid|minimal</code>',
+    '<code>/profile standard|large-clock</code>',
     '<code>/timezone Area/City</code>',
     '<code>/theme list</code>',
     '<code>/theme NAME</code>',

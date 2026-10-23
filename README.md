@@ -11,14 +11,16 @@
 
 ![Calendar Lockscreen preview](./pix.png)
 
-Calendar Lockscreen turns your week, month, or quarter into a live wallpaper. Add events from the dashboard, Telegram, or Google Calendar—then let an iOS Shortcut put the latest view on your lock screen.
+Calendar Lockscreen turns your calendar and upcoming events into a live wallpaper. Add events from the dashboard, Telegram, or Google Calendar—then let an iOS Shortcut put the latest view on your lock screen.
 
 > [!NOTE]
 > The app creates the wallpaper; an iOS Shortcut or automation applies it to your phone.
 
 ## ✨ What can it do?
 
-- Switch between **week**, **month**, and **quarter** views.
+- Choose week, month, quarter, rolling 14-day, or annual time ranges.
+- Switch between calendar, agenda, countdown, progress, hybrid, and minimal presentations.
+- Start from nine composed presets and calibrate spacing for a standard or large clock.
 - Add, list, and delete events from Telegram.
 - Import selected Google Calendar events.
 - Change built-in themes or create your own.
@@ -51,6 +53,14 @@ npm run check
 ```
 
 That one command checks formatting, linting, TypeScript, and the test suite. Tiny command, big confidence. ✅
+
+Render deterministic full-size wallpaper previews without fetching dependencies:
+
+```bash
+npm run preview:wallpapers -- /private/tmp/calendar-lockscreen-previews
+```
+
+The command writes each preset as a 1284×2778 PNG, plus a second copy with mock clock, widget, and notification overlays. These overlays are calibration aids, not universal iPhone safe areas. Check the raw wallpaper on the target lock screen because iOS may crop or zoom an image independently of the renderer.
 
 ## 🗺️ Main routes
 

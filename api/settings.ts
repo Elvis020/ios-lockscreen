@@ -1,6 +1,21 @@
 import { getManagementToken } from '../lib/auth';
 import { apiErrorResponse, jsonResponse } from '../lib/http';
-import { isViewMode, listAvailableThemeIds } from '../lib/preferences';
+import {
+  findWallpaperPreset,
+  isLockScreenProfile,
+  isPresentation,
+  isTimeRange,
+  isWallpaperPreset,
+  listAvailableThemeIds,
+  LOCK_SCREEN_PROFILES,
+  PRESENTATIONS,
+  TIME_RANGES,
+  WALLPAPER_PRESET_IDS,
+  WALLPAPER_PRESETS,
+  type LockScreenProfile,
+  type Presentation,
+  type TimeRange,
+} from '../lib/preferences';
 import { ensureWallpaperKey, updatePreferences } from '../lib/tokenManager';
 import { isValidTimeZone } from '../lib/validation';
 
@@ -25,10 +40,20 @@ export default async function handler(req: Request) {
 
       return jsonResponse({
         theme: result.user.theme,
-        viewMode: result.user.viewMode,
+        timeRange: result.user.timeRange,
+        presentation: result.user.presentation,
+        lockScreenProfile: result.user.lockScreenProfile,
+        preset: findWallpaperPreset(result.user.timeRange, result.user.presentation),
+        viewMode: result.user.timeRange,
         timeZone: result.user.timeZone,
         themes: listAvailableThemeIds(result.user.customThemes),
         customThemes: result.user.customThemes,
+        wallpaperOptions: {
+          timeRanges: TIME_RANGES,
+          presentations: PRESENTATIONS,
+          lockScreenProfiles: LOCK_SCREEN_PROFILES,
+          presets: WALLPAPER_PRESET_IDS.map((id) => WALLPAPER_PRESETS[id]),
+        },
         wallpaperKey: result.wallpaperKey,
         wallpaperUrl: wallpaperUrl(req, result.wallpaperKey),
         telegramLinked: Boolean(result.user.telegram),
@@ -45,9 +70,22 @@ export default async function handler(req: Request) {
 
       const preferences: {
         theme?: string;
-        viewMode?: 'week' | 'month' | 'quarter';
+        timeRange?: TimeRange;
+        presentation?: Presentation;
+        lockScreenProfile?: LockScreenProfile;
         timeZone?: string;
       } = {};
+
+      if (body.preset !== undefined) {
+        if (!isWallpaperPreset(body.preset)) {
+          return jsonResponse({ error: 'Unknown wallpaper preset' }, 400);
+        }
+
+        const preset = WALLPAPER_PRESETS[body.preset];
+
+        preferences.timeRange = preset.timeRange;
+        preferences.presentation = preset.presentation;
+      }
 
       if (body.theme !== undefined) {
         if (
@@ -60,12 +98,33 @@ export default async function handler(req: Request) {
         preferences.theme = body.theme;
       }
 
-      if (body.viewMode !== undefined) {
-        if (!isViewMode(body.viewMode)) {
-          return jsonResponse({ error: 'View must be week, month, or quarter' }, 400);
+      const rangeValue = body.timeRange ?? body.viewMode;
+
+      if (rangeValue !== undefined) {
+        if (!isTimeRange(rangeValue)) {
+          return jsonResponse(
+            { error: 'Range must be week, month, quarter, rolling14, or year' },
+            400,
+          );
         }
 
-        preferences.viewMode = body.viewMode;
+        preferences.timeRange = rangeValue;
+      }
+
+      if (body.presentation !== undefined) {
+        if (!isPresentation(body.presentation)) {
+          return jsonResponse({ error: 'Unknown wallpaper presentation' }, 400);
+        }
+
+        preferences.presentation = body.presentation;
+      }
+
+      if (body.lockScreenProfile !== undefined) {
+        if (!isLockScreenProfile(body.lockScreenProfile)) {
+          return jsonResponse({ error: 'Unknown lock-screen profile' }, 400);
+        }
+
+        preferences.lockScreenProfile = body.lockScreenProfile;
       }
 
       if (body.timeZone !== undefined) {
@@ -80,7 +139,11 @@ export default async function handler(req: Request) {
 
       return jsonResponse({
         theme: user?.theme,
-        viewMode: user?.viewMode,
+        timeRange: user?.timeRange,
+        presentation: user?.presentation,
+        lockScreenProfile: user?.lockScreenProfile,
+        preset: user ? findWallpaperPreset(user.timeRange, user.presentation) : null,
+        viewMode: user?.timeRange,
         timeZone: user?.timeZone,
         wallpaperUrl: wallpaperUrl(req, result.wallpaperKey),
       });

@@ -1,5 +1,6 @@
 node_modules
 .vercel
+.codex
 package-lock.json
 pix.png
 api/admin/create-invite.ts

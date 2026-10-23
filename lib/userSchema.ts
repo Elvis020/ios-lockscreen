@@ -1,7 +1,12 @@
 import {
   BUILT_IN_THEMES,
+  isLockScreenProfile,
+  isPresentation,
+  isTimeRange,
   isViewMode,
-  type ViewMode,
+  type LockScreenProfile,
+  type Presentation,
+  type TimeRange,
   type WallpaperTheme,
 } from './preferences';
 import { isValidDateString, isValidTimeZone } from './validation';
@@ -37,12 +42,14 @@ export interface TelegramLink {
 }
 
 export interface UserData {
-  schemaVersion: 2;
+  schemaVersion: 3;
   token: string;
   wallpaperKey?: string;
   name: string;
   theme: string;
-  viewMode: ViewMode;
+  timeRange: TimeRange;
+  presentation: Presentation;
+  lockScreenProfile: LockScreenProfile;
   timeZone: string;
   customThemes: WallpaperTheme[];
   events: ManualEvent[];
@@ -67,7 +74,7 @@ export function normalizeUserData(raw: unknown, token: string): UserData | null 
 
   return {
     ...record,
-    schemaVersion: 2,
+    schemaVersion: 3,
     token: typeof record.token === 'string' ? record.token : token,
     wallpaperKey:
       typeof record.wallpaperKey === 'string' && record.wallpaperKey
@@ -75,7 +82,11 @@ export function normalizeUserData(raw: unknown, token: string): UserData | null 
         : undefined,
     name: typeof record.name === 'string' ? record.name : '',
     theme,
-    viewMode: isViewMode(record.viewMode) ? record.viewMode : 'quarter',
+    timeRange: normalizeTimeRange(record),
+    presentation: isPresentation(record.presentation) ? record.presentation : 'calendar',
+    lockScreenProfile: isLockScreenProfile(record.lockScreenProfile)
+      ? record.lockScreenProfile
+      : 'standard',
     timeZone: isValidTimeZone(record.timeZone) ? record.timeZone : 'UTC',
     customThemes,
     events: normalizeManualEvents(record.events),
@@ -88,6 +99,18 @@ export function normalizeUserData(raw: unknown, token: string): UserData | null 
         : 0,
     telegram: normalizeTelegram(record.telegram),
   };
+}
+
+function normalizeTimeRange(record: UnknownRecord): TimeRange {
+  if (isTimeRange(record.timeRange)) {
+    return record.timeRange;
+  }
+
+  if (isViewMode(record.viewMode)) {
+    return record.viewMode;
+  }
+
+  return 'quarter';
 }
 
 function normalizeTheme(value: unknown, customThemes: WallpaperTheme[]): string {

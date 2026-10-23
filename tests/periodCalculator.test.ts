@@ -24,4 +24,21 @@ describe('getPeriodInfo', () => {
       currentDay: 6,
     });
   });
+
+  it('builds rolling and annual ranges without presenting rolling progress', () => {
+    expect(
+      getPeriodInfo(new Date('2026-10-23T12:00:00Z'), 'rolling14', 'UTC'),
+    ).toMatchObject({
+      kind: 'rolling',
+      startDate: '2026-10-23',
+      endDate: '2026-11-05',
+      totalDays: 14,
+      percentComplete: 0,
+    });
+    expect(getPeriodInfo(new Date('2028-02-29T12:00:00Z'), 'year', 'UTC')).toMatchObject({
+      startDate: '2028-01-01',
+      endDate: '2028-12-31',
+      totalDays: 366,
+    });
+  });
 });
