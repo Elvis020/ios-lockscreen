@@ -65,6 +65,13 @@ Typing `/` in the bot chat will then show autocomplete for:
 /sync
 ```
 
+`/status` shows the current wallpaper setup and includes one **Open wallpaper**
+button for quick access. The URL stays out of the status summary so it remains easy to
+scan.
+
+`/url` deliberately returns the full wallpaper URL as plain, copyable text. Use this
+version when configuring the iOS Shortcut or anywhere else that needs the raw URL.
+
 `/start` is intentionally omitted from autocomplete because it is only used by the dashboard's single-use account-link URL.
 
 Custom theme names must begin with a letter and may contain lowercase letters, numbers, or hyphens. Every color must use the `#RRGGBB` format. Each account may save up to five custom themes.

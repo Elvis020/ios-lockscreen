@@ -20,6 +20,8 @@ import {
   normalizeEventName,
 } from './validation';
 
+const WALLPAPER_REFRESH_NOTE = 'Changes appear on the next iOS wallpaper refresh.';
+
 export interface TelegramUpdate {
   update_id?: number;
   message?: {
@@ -33,8 +35,23 @@ export interface TelegramProcessingResult {
   completionCommitted: boolean;
 }
 
+export interface TelegramInlineKeyboardMarkup {
+  inline_keyboard: Array<Array<{ text: string; url: string }>>;
+}
+
+export interface TelegramReply {
+  text: string;
+  parseMode?: 'HTML';
+  replyMarkup?: TelegramInlineKeyboardMarkup;
+}
+
+export interface TelegramMessageOptions {
+  parseMode?: 'HTML';
+  replyMarkup?: TelegramInlineKeyboardMarkup;
+}
+
 interface LinkedCommandResult extends TelegramProcessingResult {
-  reply: string;
+  reply: TelegramReply;
 }
 
 export async function processTelegramUpdate(
@@ -65,7 +82,13 @@ export async function processTelegramUpdate(
       await linkChat(userId, chatId, args[0], update.message?.from?.username, completion);
       await sendTelegramReply(
         chatId,
-        'Linked. Use /help to manage the wallpaper. Changes appear on the next iOS wallpaper fetch.',
+        htmlReply(
+          [
+            '✓ <b>Telegram linked</b>',
+            'Use <code>/help</code> to manage your wallpaper.',
+            WALLPAPER_REFRESH_NOTE,
+          ].join('\n'),
+        ),
       );
 
       return { completionCommitted: Boolean(completion) };
@@ -79,7 +102,7 @@ export async function processTelegramUpdate(
     }
 
     if (!token) {
-      await sendTelegramReply(chatId, 'Open the web dashboard and link Telegram first.');
+      await sendTelegramReply(chatId, unlinkedReply());
 
       return { completionCommitted: false };
     }
@@ -88,7 +111,7 @@ export async function processTelegramUpdate(
 
     if (!user || user.telegram?.userId !== userId) {
       await deleteRedisKeyIfValue(redis, `telegram:user:${userId}`, token);
-      await sendTelegramReply(chatId, 'Open the web dashboard and link Telegram first.');
+      await sendTelegramReply(chatId, unlinkedReply());
 
       return { completionCommitted: false };
     }
@@ -105,10 +128,11 @@ export async function processTelegramUpdate(
 
     return { completionCommitted: result.completionCommitted };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Command failed';
+    const message = error instanceof Error ? error.message : '';
+    const reply = expectedCommandErrorReply(message);
 
-    if (isExpectedCommandError(message)) {
-      await sendTelegramReply(chatId, `Unable to complete command: ${message}`);
+    if (reply) {
+      await sendTelegramReply(chatId, reply);
 
       return { completionCommitted: false };
     }
@@ -117,17 +141,35 @@ export async function processTelegramUpdate(
   }
 }
 
-export async function sendTelegramMessage(chatId: string, text: string): Promise<void> {
+export async function sendTelegramMessage(
+  chatId: string,
+  text: string,
+  options: TelegramMessageOptions = {},
+): Promise<void> {
   const botToken = process.env.TELEGRAM_BOT_TOKEN;
 
   if (!botToken) {
     throw new Error('Telegram bot is not configured');
   }
 
+  const payload: Record<string, unknown> = {
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: true,
+  };
+
+  if (options.parseMode) {
+    payload.parse_mode = options.parseMode;
+  }
+
+  if (options.replyMarkup) {
+    payload.reply_markup = options.replyMarkup;
+  }
+
   const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
+    body: JSON.stringify(payload),
   });
 
   if (!response.ok) {
@@ -135,9 +177,12 @@ export async function sendTelegramMessage(chatId: string, text: string): Promise
   }
 }
 
-async function sendTelegramReply(chatId: string, text: string): Promise<void> {
+async function sendTelegramReply(chatId: string, reply: TelegramReply): Promise<void> {
   try {
-    await sendTelegramMessage(chatId, text);
+    await sendTelegramMessage(chatId, reply.text, {
+      parseMode: reply.parseMode,
+      replyMarkup: reply.replyMarkup,
+    });
   } catch (error) {
     console.error('Telegram reply delivery failed:', error);
   }
@@ -215,7 +260,7 @@ export async function handleLinkedTelegramCommand(
 ): Promise<string> {
   const result = await runLinkedTelegramCommand(token, command, args, origin);
 
-  return result.reply;
+  return result.reply.text;
 }
 
 async function runLinkedTelegramCommand(
@@ -226,7 +271,7 @@ async function runLinkedTelegramCommand(
   completion?: MutationCompletion,
 ): Promise<LinkedCommandResult> {
   if (command === '/help') {
-    return { reply: helpText(), completionCommitted: false };
+    return { reply: htmlReply(helpText()), completionCommitted: false };
   }
 
   if (command === '/status' || command === '/url') {
@@ -240,21 +285,29 @@ async function runLinkedTelegramCommand(
 
     if (command === '/url') {
       return {
-        reply: `Wallpaper URL:\n${url}`,
+        reply: { text: `Wallpaper URL\n${url}` },
         completionCommitted: false,
       };
     }
 
     return {
-      reply: [
-        `View: ${result.user.viewMode}`,
-        `Theme: ${result.user.theme}`,
-        `Time zone: ${result.user.timeZone}`,
-        `Manual events: ${result.user.events.length}`,
-        `Google events cached: ${result.user.cachedCalEvents.length}`,
-        `Wallpaper: ${url}`,
-        'Settings apply on the next iOS wallpaper fetch.',
-      ].join('\n'),
+      reply: {
+        ...htmlReply(
+          [
+            '<b>Wallpaper status</b>',
+            '',
+            `View: <b>${escapeTelegramHtml(result.user.viewMode)}</b>`,
+            `Theme: <b>${escapeTelegramHtml(result.user.theme)}</b>`,
+            `Time zone: <b>${escapeTelegramHtml(result.user.timeZone)}</b>`,
+            `Events: <b>${result.user.events.length} manual</b> · <b>${result.user.cachedCalEvents.length} Google cached</b>`,
+            '',
+            WALLPAPER_REFRESH_NOTE,
+          ].join('\n'),
+        ),
+        replyMarkup: {
+          inline_keyboard: [[{ text: 'Open wallpaper', url }]],
+        },
+      },
       completionCommitted: false,
     };
   }
@@ -265,7 +318,7 @@ async function runLinkedTelegramCommand(
 
     if (!isValidDateString(date) || !name) {
       return {
-        reply: 'Usage: /add YYYY-MM-DD Event name',
+        reply: usageReply('Add an event', '/add YYYY-MM-DD Event name'),
         completionCommitted: false,
       };
     }
@@ -273,7 +326,13 @@ async function runLinkedTelegramCommand(
     await addManualEvent(token, { name, date }, completion);
 
     return {
-      reply: `Added “${name}” on ${date}. It appears on the next wallpaper fetch.`,
+      reply: htmlReply(
+        [
+          '✓ <b>Event added</b>',
+          `${escapeTelegramHtml(name)} · ${escapeTelegramHtml(date)}`,
+          WALLPAPER_REFRESH_NOTE,
+        ].join('\n'),
+      ),
       completionCommitted: Boolean(completion),
     };
   }
@@ -283,15 +342,29 @@ async function runLinkedTelegramCommand(
 
     if (!user?.events.length) {
       return {
-        reply: 'No manual events yet. Use /add YYYY-MM-DD Event name.',
+        reply: htmlReply(
+          [
+            '<b>No manual events</b>',
+            'Add one with <code>/add YYYY-MM-DD Event name</code>.',
+          ].join('\n'),
+        ),
         completionCommitted: false,
       };
     }
 
     return {
-      reply: user.events
-        .map((event, index) => `${index + 1}. ${event.date} — ${event.name}`)
-        .join('\n'),
+      reply: htmlReply(
+        [
+          '<b>Manual events</b>',
+          '',
+          ...user.events.map(
+            (event, index) =>
+              `${index + 1}. <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)}`,
+          ),
+          '',
+          'Delete one with <code>/delete NUMBER</code>.',
+        ].join('\n'),
+      ),
       completionCommitted: false,
     };
   }
@@ -301,7 +374,7 @@ async function runLinkedTelegramCommand(
 
     if (!Number.isInteger(index) || index < 0) {
       return {
-        reply: 'Usage: /delete NUMBER from /events',
+        reply: deleteUsageReply(),
         completionCommitted: false,
       };
     }
@@ -311,7 +384,7 @@ async function runLinkedTelegramCommand(
     } catch (error) {
       if (error instanceof Error && error.message === 'Event not found') {
         return {
-          reply: 'Usage: /delete NUMBER from /events',
+          reply: deleteUsageReply(),
           completionCommitted: false,
         };
       }
@@ -320,7 +393,7 @@ async function runLinkedTelegramCommand(
     }
 
     return {
-      reply: 'Event deleted.',
+      reply: htmlReply(['✓ <b>Event deleted</b>', WALLPAPER_REFRESH_NOTE].join('\n')),
       completionCommitted: Boolean(completion),
     };
   }
@@ -328,7 +401,7 @@ async function runLinkedTelegramCommand(
   if (command === '/view') {
     if (!isViewMode(args[0])) {
       return {
-        reply: 'Usage: /view week|month|quarter',
+        reply: usageReply('Choose a view', '/view week|month|quarter'),
         completionCommitted: false,
       };
     }
@@ -336,7 +409,13 @@ async function runLinkedTelegramCommand(
     await updatePreferences(token, { viewMode: args[0] }, completion);
 
     return {
-      reply: `View changed to ${args[0]}. It applies on the next wallpaper fetch.`,
+      reply: htmlReply(
+        [
+          '✓ <b>View updated</b>',
+          escapeTelegramHtml(args[0]),
+          WALLPAPER_REFRESH_NOTE,
+        ].join('\n'),
+      ),
       completionCommitted: Boolean(completion),
     };
   }
@@ -344,7 +423,13 @@ async function runLinkedTelegramCommand(
   if (command === '/timezone') {
     if (!isValidTimeZone(args[0])) {
       return {
-        reply: 'Usage: /timezone Area/City (example: /timezone Africa/Accra)',
+        reply: htmlReply(
+          [
+            '<b>Set a time zone</b>',
+            '<code>/timezone Area/City</code>',
+            'Example: <code>/timezone Africa/Accra</code>',
+          ].join('\n'),
+        ),
         completionCommitted: false,
       };
     }
@@ -352,7 +437,13 @@ async function runLinkedTelegramCommand(
     await updatePreferences(token, { timeZone: args[0] }, completion);
 
     return {
-      reply: `Time zone changed to ${args[0]}.`,
+      reply: htmlReply(
+        [
+          '✓ <b>Time zone updated</b>',
+          escapeTelegramHtml(args[0]),
+          WALLPAPER_REFRESH_NOTE,
+        ].join('\n'),
+      ),
       completionCommitted: Boolean(completion),
     };
   }
@@ -365,12 +456,25 @@ async function runLinkedTelegramCommand(
     const count = await syncGoogleEvents(token, completion);
 
     return {
-      reply: `Google Calendar synced: ${count} cached event${count === 1 ? '' : 's'}.`,
+      reply: htmlReply(
+        [
+          '✓ <b>Google Calendar synced</b>',
+          `${count} cached event${count === 1 ? '' : 's'}.`,
+        ].join('\n'),
+      ),
       completionCommitted: Boolean(completion),
     };
   }
 
-  return { reply: helpText(), completionCommitted: false };
+  return {
+    reply: htmlReply(
+      [
+        '<b>Command not recognised</b>',
+        'Use <code>/help</code> to see available commands.',
+      ].join('\n'),
+    ),
+    completionCommitted: false,
+  };
 }
 
 async function runThemeCommand(
@@ -386,7 +490,18 @@ async function runThemeCommand(
 
   if (!args.length || args[0] === 'list') {
     return {
-      reply: `Themes: ${listAvailableThemeIds(user.customThemes).join(', ')}\nCurrent: ${user.theme}`,
+      reply: htmlReply(
+        [
+          '<b>Themes</b>',
+          '',
+          `Current: <b>${escapeTelegramHtml(user.theme)}</b>`,
+          `Available: ${listAvailableThemeIds(user.customThemes)
+            .map(escapeTelegramHtml)
+            .join(' · ')}`,
+          '',
+          'Select with <code>/theme NAME</code>.',
+        ].join('\n'),
+      ),
       completionCommitted: false,
     };
   }
@@ -396,15 +511,22 @@ async function runThemeCommand(
 
     if (!theme) {
       return {
-        reply:
-          'Usage: /theme custom add name #BACKGROUND #PASSED #WEEKEND #CURRENT #FUTURE',
+        reply: usageReply(
+          'Save a custom theme',
+          '/theme custom add name #BACKGROUND #PASSED #WEEKEND #CURRENT #FUTURE',
+        ),
         completionCommitted: false,
       };
     }
 
     if (BUILT_IN_THEMES[theme.id]) {
       return {
-        reply: 'Built-in theme names are reserved.',
+        reply: htmlReply(
+          [
+            '<b>Name reserved</b>',
+            'Choose a name that is not used by a built-in theme.',
+          ].join('\n'),
+        ),
         completionCommitted: false,
       };
     }
@@ -412,7 +534,13 @@ async function runThemeCommand(
     await addCustomTheme(token, theme, completion);
 
     return {
-      reply: `Custom theme “${theme.id}” saved. Use /theme ${theme.id} to select it.`,
+      reply: htmlReply(
+        [
+          '✓ <b>Custom theme saved</b>',
+          escapeTelegramHtml(theme.id),
+          `Select it with <code>/theme ${escapeTelegramHtml(theme.id)}</code>.`,
+        ].join('\n'),
+      ),
       completionCommitted: Boolean(completion),
     };
   }
@@ -420,15 +548,36 @@ async function runThemeCommand(
   if (args[0] === 'custom' && args[1] === 'delete') {
     if (!args[2]) {
       return {
-        reply: 'Usage: /theme custom delete name',
+        reply: usageReply('Delete a custom theme', '/theme custom delete name'),
         completionCommitted: false,
       };
     }
 
-    await deleteCustomTheme(token, args[2].toLowerCase(), completion);
+    const themeId = args[2].toLowerCase();
+
+    if (!user.customThemes.some(({ id }) => id === themeId)) {
+      if (completion && (await getRedis().get(completion.key))) {
+        return {
+          reply: customThemeDeletedReply(themeId),
+          completionCommitted: true,
+        };
+      }
+
+      return {
+        reply: htmlReply(
+          [
+            '<b>Custom theme not found</b>',
+            'Use <code>/theme list</code> to see your saved themes.',
+          ].join('\n'),
+        ),
+        completionCommitted: false,
+      };
+    }
+
+    await deleteCustomTheme(token, themeId, completion);
 
     return {
-      reply: `Custom theme “${args[2].toLowerCase()}” deleted.`,
+      reply: customThemeDeletedReply(themeId),
       completionCommitted: Boolean(completion),
     };
   }
@@ -437,7 +586,12 @@ async function runThemeCommand(
 
   if (!listAvailableThemeIds(user.customThemes).includes(themeId)) {
     return {
-      reply: 'Unknown theme. Use /theme list.',
+      reply: htmlReply(
+        [
+          '<b>Theme not found</b>',
+          'Use <code>/theme list</code> to see available themes.',
+        ].join('\n'),
+      ),
       completionCommitted: false,
     };
   }
@@ -445,37 +599,178 @@ async function runThemeCommand(
   await updatePreferences(token, { theme: themeId }, completion);
 
   return {
-    reply: `Theme changed to ${themeId}. It applies on the next wallpaper fetch.`,
+    reply: htmlReply(
+      [
+        '✓ <b>Theme updated</b>',
+        escapeTelegramHtml(themeId),
+        WALLPAPER_REFRESH_NOTE,
+      ].join('\n'),
+    ),
     completionCommitted: Boolean(completion),
   };
 }
 
 function helpText(): string {
   return [
-    '/status — current settings and wallpaper URL',
-    '/url — wallpaper URL',
-    '/add YYYY-MM-DD Name',
-    '/events',
-    '/delete NUMBER',
-    '/view week|month|quarter',
-    '/timezone Area/City',
-    '/theme list',
-    '/theme NAME',
-    '/theme custom add name #BG #PASSED #WEEKEND #CURRENT #FUTURE',
-    '/theme custom delete name',
-    '/sync — refresh Google cached events',
+    '<b>Calendar Lockscreen</b>',
+    '',
+    '<b>Wallpaper</b>',
+    '<code>/status</code>  Current setup',
+    '<code>/url</code>  Copy wallpaper URL',
+    '',
+    '<b>Events</b>',
+    '<code>/add YYYY-MM-DD Event name</code>',
+    '<code>/events</code>',
+    '<code>/delete NUMBER</code>',
+    '',
+    '<b>Appearance</b>',
+    '<code>/view week|month|quarter</code>',
+    '<code>/timezone Area/City</code>',
+    '<code>/theme list</code>',
+    '<code>/theme NAME</code>',
+    '<code>/theme custom add name #BG #PASSED #WEEKEND #CURRENT #FUTURE</code>',
+    '<code>/theme custom delete name</code>',
+    '',
+    '<b>Calendar</b>',
+    '<code>/sync</code>  Refresh Google events',
   ].join('\n');
 }
 
-function isExpectedCommandError(message: string): boolean {
-  return (
-    message === 'Link code is required' ||
-    message === 'Link code is invalid or expired' ||
-    message === 'Linked account no longer exists' ||
-    message === 'Event not found' ||
-    message === 'Unknown theme' ||
-    message === 'Built-in theme names are reserved' ||
-    message === 'One or more calendar events are unavailable' ||
-    message.startsWith('Maximum ')
+function htmlReply(text: string): TelegramReply {
+  return { text, parseMode: 'HTML' };
+}
+
+function usageReply(title: string, command: string): TelegramReply {
+  return htmlReply(
+    [
+      `<b>${escapeTelegramHtml(title)}</b>`,
+      `<code>${escapeTelegramHtml(command)}</code>`,
+    ].join('\n'),
   );
+}
+
+function deleteUsageReply(): TelegramReply {
+  return htmlReply(
+    [
+      '<b>Choose an event to delete</b>',
+      'Open <code>/events</code>, then use <code>/delete NUMBER</code>.',
+    ].join('\n'),
+  );
+}
+
+function customThemeDeletedReply(themeId: string): TelegramReply {
+  return htmlReply(
+    [
+      '✓ <b>Custom theme deleted</b>',
+      escapeTelegramHtml(themeId),
+      WALLPAPER_REFRESH_NOTE,
+    ].join('\n'),
+  );
+}
+
+function unlinkedReply(): TelegramReply {
+  return htmlReply(
+    [
+      '<b>Telegram isn’t linked</b>',
+      'Open the web dashboard and link Telegram to continue.',
+    ].join('\n'),
+  );
+}
+
+function expectedCommandErrorReply(message: string): TelegramReply | null {
+  if (message === 'Link code is required') {
+    return htmlReply(
+      [
+        '<b>Link code required</b>',
+        'Open the Telegram link from the web dashboard to connect your account.',
+      ].join('\n'),
+    );
+  }
+
+  if (message === 'Link code is invalid or expired') {
+    return htmlReply(
+      [
+        '<b>Link expired</b>',
+        'Return to the web dashboard and create a new Telegram link.',
+      ].join('\n'),
+    );
+  }
+
+  if (
+    message === 'Linked account no longer exists' ||
+    message === 'Invalid management token'
+  ) {
+    return unlinkedReply();
+  }
+
+  if (message === 'Event not found') {
+    return deleteUsageReply();
+  }
+
+  if (message === 'Maximum 7 tracked events allowed') {
+    return htmlReply(
+      [
+        '<b>Event limit reached</b>',
+        'Keep up to 7 tracked events. Delete one before adding another.',
+      ].join('\n'),
+    );
+  }
+
+  if (message === 'One or more calendar events are unavailable') {
+    return htmlReply(
+      ['<b>Calendar events changed</b>', 'Refresh your events and try again.'].join('\n'),
+    );
+  }
+
+  if (message === 'Unknown theme') {
+    return htmlReply(
+      [
+        '<b>Theme not found</b>',
+        'Use <code>/theme list</code> to see available themes.',
+      ].join('\n'),
+    );
+  }
+
+  if (message === 'Built-in theme names are reserved') {
+    return htmlReply(
+      [
+        '<b>Name reserved</b>',
+        'Choose a name that is not used by a built-in theme.',
+      ].join('\n'),
+    );
+  }
+
+  if (message === 'Maximum 5 custom themes allowed') {
+    return htmlReply(
+      ['<b>Theme limit reached</b>', 'Delete a custom theme before saving another.'].join(
+        '\n',
+      ),
+    );
+  }
+
+  if (message === 'Google account must be reconnected') {
+    return htmlReply(
+      [
+        '<b>Google Calendar needs attention</b>',
+        'Reconnect your Google account from the web dashboard, then try again.',
+      ].join('\n'),
+    );
+  }
+
+  if (message === 'Google accounts changed during sync; please retry') {
+    return htmlReply(
+      ['<b>Calendar account changed</b>', 'Run <code>/sync</code> again.'].join('\n'),
+    );
+  }
+
+  return null;
+}
+
+export function escapeTelegramHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
