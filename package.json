@@ -1,0 +1,38 @@
+{
+  "name": "year-progress-wallpaper",
+  "version": "1.0.0",
+  "description": "Vercel Edge Function that generates dynamic iPhone wallpapers showing year progress",
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm test"
+  },
+  "keywords": [
+    "vercel",
+    "edge-function",
+    "wallpaper",
+    "year-progress"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@upstash/redis": "^1.36.2",
+    "@vercel/og": "^0.6.2",
+    "react": "^19.2.3"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@stylistic/eslint-plugin": "^5.5.0",
+    "@types/node": "^20.10.5",
+    "@types/react": "^19.2.7",
+    "eslint": "^9.38.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.3.3",
+    "typescript-eslint": "^8.46.1",
+    "vercel": "^33.0.1",
+    "vitest": "^3.2.4"
+  }
+}
