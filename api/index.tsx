@@ -358,7 +358,7 @@ export default function handler() {
 
         <div class="card">
           <h2>Telegram</h2>
-          <p class="muted">Link the bot, then add events and switch view, theme, or time zone by command.</p>
+          <p id="telegramStatus" class="muted" aria-live="polite">Link the bot, then add events and switch view, theme, or time zone by command.</p>
           <button id="telegramButton" class="button full" type="button" style="margin-top: 16px;">Link Telegram</button>
         </div>
       </aside>
@@ -368,6 +368,8 @@ export default function handler() {
   <script>
     const TOKEN_KEY = 'calendarLockscreenManagementToken';
     const LEGACY_TOKEN_KEY = 'quarterProgressToken';
+    const TELEGRAM_POLL_INTERVAL_MS = 2_000;
+    const TELEGRAM_POLL_TIMEOUT_MS = 60_000;
 
     function loadStoredToken() {
       const currentToken = localStorage.getItem(TOKEN_KEY);
@@ -389,12 +391,20 @@ export default function handler() {
     }
 
     let token = loadStoredToken();
+    let authSessionId = 0;
     let wallpaperUrl = '';
+    let telegramLinked = false;
+    let telegramPollTimer = null;
+    let telegramPollDeadline = 0;
 
     const byId = (id) => document.getElementById(id);
 
-    function authHeaders(json) {
-      const headers = { Authorization: 'Bearer ' + token };
+    function isCurrentSession(sessionId, sessionToken) {
+      return sessionId === authSessionId && sessionToken === token;
+    }
+
+    function authHeaders(json, requestToken) {
+      const headers = { Authorization: 'Bearer ' + requestToken };
 
       if (json) {
         headers['Content-Type'] = 'application/json';
@@ -404,10 +414,12 @@ export default function handler() {
     }
 
     async function api(path, options) {
+      const requestToken = token;
+      const requestSessionId = authSessionId;
       const response = await fetch(path, {
         ...options,
         headers: {
-          ...authHeaders(Boolean(options && options.body)),
+          ...authHeaders(Boolean(options && options.body), requestToken),
           ...(options && options.headers),
         },
       });
@@ -416,7 +428,10 @@ export default function handler() {
         .catch(() => ({ error: 'Unexpected server response' }));
 
       if (response.status === 401) {
-        logout('Your management session is invalid. Register again or restore a saved token.');
+        if (isCurrentSession(requestSessionId, requestToken)) {
+          logout('Your management session is invalid. Register again or restore a saved token.');
+        }
+
         throw new Error(data.error || 'Unauthorized');
       }
 
@@ -444,6 +459,9 @@ export default function handler() {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(LEGACY_TOKEN_KEY);
       token = null;
+      authSessionId += 1;
+      stopTelegramStatusPolling();
+      renderTelegramStatus(false);
       setAuthenticated(false);
 
       if (message) {
@@ -470,6 +488,7 @@ export default function handler() {
         }
 
         token = data.token;
+        authSessionId += 1;
         localStorage.setItem(TOKEN_KEY, token);
         setAuthenticated(true);
         await loadDashboard();
@@ -487,6 +506,7 @@ export default function handler() {
       }
 
       token = candidate;
+      authSessionId += 1;
 
       try {
         await api('/api/settings');
@@ -496,13 +516,25 @@ export default function handler() {
         showNotice('Session restored.');
       } catch (error) {
         token = null;
+        authSessionId += 1;
         showNotice(error.message);
       }
     }
 
     async function loadDashboard() {
+      const dashboardToken = token;
+      const dashboardSessionId = authSessionId;
       const settings = await api('/api/settings');
+
+      if (!isCurrentSession(dashboardSessionId, dashboardToken)) {
+        return;
+      }
+
       const events = await api('/api/events');
+
+      if (!isCurrentSession(dashboardSessionId, dashboardToken)) {
+        return;
+      }
 
       byId('viewMode').value = settings.viewMode;
       byId('timeZone').value = settings.timeZone;
@@ -519,8 +551,87 @@ export default function handler() {
       wallpaperUrl = settings.wallpaperUrl;
       byId('wallpaperUrl').textContent = wallpaperUrl;
       byId('managementToken').textContent = token;
+      renderTelegramStatus(settings.telegramLinked);
       renderEvents(events.events);
       await loadGoogle();
+    }
+
+    function renderTelegramStatus(linked) {
+      const button = byId('telegramButton');
+
+      telegramLinked = Boolean(linked);
+      byId('telegramStatus').textContent = telegramLinked
+        ? 'Connected. Use the bot to manage events, view, theme, or time zone. Relink only to change Telegram accounts.'
+        : 'Link the bot, then add events and switch view, theme, or time zone by command.';
+      button.textContent = telegramLinked ? 'Relink Telegram' : 'Link Telegram';
+      button.classList.toggle('secondary', telegramLinked);
+    }
+
+    async function refreshTelegramStatus() {
+      const requestToken = token;
+      const requestSessionId = authSessionId;
+
+      if (!requestToken) {
+        return null;
+      }
+
+      const settings = await api('/api/settings');
+
+      if (!isCurrentSession(requestSessionId, requestToken)) {
+        return null;
+      }
+
+      renderTelegramStatus(settings.telegramLinked);
+
+      return telegramLinked;
+    }
+
+    function stopTelegramStatusPolling() {
+      if (telegramPollTimer !== null) {
+        clearTimeout(telegramPollTimer);
+        telegramPollTimer = null;
+      }
+    }
+
+    async function pollTelegramStatus() {
+      const pollSessionId = authSessionId;
+
+      if (!token || Date.now() >= telegramPollDeadline) {
+        stopTelegramStatusPolling();
+
+        return;
+      }
+
+      try {
+        const linked = await refreshTelegramStatus();
+
+        if (pollSessionId !== authSessionId || !token) {
+          return;
+        }
+
+        if (linked) {
+          stopTelegramStatusPolling();
+          showNotice('Telegram linked. You can now manage the wallpaper from the bot.');
+
+          return;
+        }
+      } catch {
+        if (pollSessionId !== authSessionId || !token) {
+          return;
+        }
+      }
+
+      if (pollSessionId !== authSessionId || !token) {
+        return;
+      }
+
+      telegramPollTimer = setTimeout(pollTelegramStatus, TELEGRAM_POLL_INTERVAL_MS);
+    }
+
+    function startTelegramStatusPolling() {
+      stopTelegramStatusPolling();
+      telegramPollDeadline = Date.now() + TELEGRAM_POLL_TIMEOUT_MS;
+      telegramPollTimer = setTimeout(pollTelegramStatus, TELEGRAM_POLL_INTERVAL_MS);
     }
 
     function renderEvents(events) {
@@ -689,12 +800,30 @@ export default function handler() {
     }
 
     async function linkTelegram() {
+      const linkToken = token;
+      const linkSessionId = authSessionId;
+
       try {
+        const wasLinked = telegramLinked;
         const data = await api('/api/telegram/link', { method: 'POST' });
 
+        if (!isCurrentSession(linkSessionId, linkToken)) {
+          return;
+        }
+
         window.open(data.linkUrl, '_blank', 'noopener,noreferrer');
+
+        if (wasLinked) {
+          showNotice('A fresh Telegram link opened. Complete it only if you want to change accounts.');
+        } else {
+          byId('telegramStatus').textContent = 'Waiting for Telegram to finish linking…';
+          showNotice('Complete the link in Telegram, then return here.');
+          startTelegramStatusPolling();
+        }
       } catch (error) {
-        showNotice(error.message);
+        if (isCurrentSession(linkSessionId, linkToken)) {
+          showNotice(error.message);
+        }
       }
     }
 
@@ -728,6 +857,12 @@ export default function handler() {
     byId('copyUrlButton').addEventListener('click', copyWallpaperUrl);
     byId('copyTokenButton').addEventListener('click', copyManagementToken);
     byId('previewButton').addEventListener('click', previewWallpaper);
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible' && token) {
+        refreshTelegramStatus().catch(() => {});
+      }
+    });
 
     const googleResult = new URLSearchParams(window.location.search).get('google');
 
