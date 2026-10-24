@@ -1,13 +1,8 @@
 import { isValidElement, type CSSProperties, type ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
-import {
-  LOCK_SCREEN_PROFILES,
-  PRESENTATIONS,
-  TIME_RANGES,
-  WALLPAPER_PRESET_IDS,
-  WALLPAPER_PRESETS,
-} from '../lib/preferences';
+import { LOCK_SCREEN_PROFILES, PRESENTATIONS, TIME_RANGES } from '../lib/preferences';
 import { buildWallpaperModel } from '../lib/wallpaperModel';
+import { getMonthCollectionLayout } from '../lib/wallpaperLayout';
 import {
   CALENDAR_DOT_GEOMETRY,
   createWallpaperImageResponse,
@@ -33,25 +28,26 @@ const events = [
 ];
 
 describe('wallpaper renderer', () => {
-  it('materializes native-size PNGs for all nine presets and both profiles', async () => {
+  it('materializes native-size PNGs for all sixty range/presentation/profile layouts', async () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
-      for (const presetId of WALLPAPER_PRESET_IDS) {
-        const preset = WALLPAPER_PRESETS[presetId];
-        const model = buildWallpaperModel({
-          date,
-          timeRange: preset.timeRange,
-          presentation: preset.presentation,
-          lockScreenProfile,
-          publicEvents: events,
-        });
-        const response = createWallpaperImageResponse(model);
-        const bytes = new Uint8Array(await response.arrayBuffer());
+      for (const timeRange of TIME_RANGES) {
+        for (const presentation of PRESENTATIONS) {
+          const model = buildWallpaperModel({
+            date,
+            timeRange,
+            presentation,
+            lockScreenProfile,
+            publicEvents: events,
+          });
+          const response = createWallpaperImageResponse(model);
+          const bytes = new Uint8Array(await response.arrayBuffer());
 
-        expect(response.headers.get('content-type')).toContain('image/png');
-        expect(Array.from(bytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
-        expect(readPngDimension(bytes, 16)).toBe(WALLPAPER_WIDTH);
-        expect(readPngDimension(bytes, 20)).toBe(WALLPAPER_HEIGHT);
-        expect(bytes.length).toBeGreaterThan(10_000);
+          expect(response.headers.get('content-type')).toContain('image/png');
+          expect(Array.from(bytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+          expect(readPngDimension(bytes, 16)).toBe(WALLPAPER_WIDTH);
+          expect(readPngDimension(bytes, 20)).toBe(WALLPAPER_HEIGHT);
+          expect(bytes.length).toBeGreaterThan(10_000);
+        }
       }
     }
   }, 60_000);
@@ -137,7 +133,7 @@ describe('wallpaper renderer', () => {
     const { text, styles } = inspectCanvas(WallpaperCanvas({ model }));
 
     expect(styles.some(({ marginTop }) => marginTop === 8)).toBe(true);
-    expect(styles.some(({ marginTop }) => marginTop === 64)).toBe(true);
+    expect(styles.some(({ marginTop }) => marginTop === 24)).toBe(true);
     expect(
       styles.some(({ fontSize, color }) => fontSize === 22 && color === model.theme.text),
     ).toBe(true);
@@ -160,11 +156,11 @@ describe('wallpaper renderer', () => {
             presentation,
             lockScreenProfile,
           });
-          const legacyHeight =
-            timeRange === 'quarter' ? 44 : lockScreenProfile === 'standard' ? 88 : 78;
-          const extraSpacing = timeRange === 'quarter' ? 8 : 12;
-          const expectedHeight =
-            legacyHeight + (presentation === 'progress' ? 0 : extraSpacing);
+          const bounds = getWallpaperLayoutBounds(model);
+          const expectedHeight = getMonthCollectionLayout(
+            model,
+            bounds.calendarBottom! - bounds.calendarTop!,
+          ).geometry.cellHeight;
           const { styles } = inspectCanvas(WallpaperCanvas({ model }));
           const cells = styles.filter(
             ({ width, height }) => width === '14.285%' && height === expectedHeight,

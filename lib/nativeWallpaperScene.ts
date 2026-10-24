@@ -3,17 +3,23 @@ import {
   CONTENT_LEFT,
   CONTENT_RIGHT,
   getCalendarComposition,
-  getDayCardGeometry,
-  getMonthCollectionGeometry,
-  getMonthGeometry,
-  getMonthGroupHeight,
+  getDayRowsLayout,
+  getMonthCollectionLayout,
   getWallpaperEventLayout,
   getWallpaperHeaderCopy,
+  getWallpaperLayoutBounds,
+  isGroupedCalendarLayout,
+  HEADER_HEIGHT,
   WALLPAPER_HEIGHT,
   WALLPAPER_WIDTH,
   WEEKDAY_LABELS,
 } from './wallpaperLayout';
-import type { WallpaperCell, WallpaperModel } from './wallpaperModel';
+import {
+  formatPeriodRemaining,
+  type DisplayEvent,
+  type WallpaperCell,
+  type WallpaperModel,
+} from './wallpaperModel';
 
 interface Frame {
   x: number;
@@ -45,9 +51,11 @@ export interface NativeWallpaperScene {
   commands: NativeDrawCommand[];
 }
 
-export class UnsupportedNativeLayoutError extends Error {
+export class NativeSceneBudgetError extends Error {
   constructor() {
-    super('Native rendering currently supports week, month and quarter calendars only');
+    super(
+      'Too many calendar markers for native rendering. Reduce the public event list.',
+    );
   }
 }
 
@@ -59,11 +67,9 @@ export function buildNativeWallpaperScene(
   title?: string,
 ): NativeWallpaperScene {
   const composition = getCalendarComposition(model);
-
-  if (!composition) {
-    throw new UnsupportedNativeLayoutError();
-  }
-
+  const bounds = getWallpaperLayoutBounds(model);
+  const headerTop = composition?.top ?? bounds.contentTop;
+  const headerHeight = composition?.headerHeight ?? HEADER_HEIGHT;
   const scene: NativeWallpaperScene = {
     version: 1,
     width: WALLPAPER_WIDTH,
@@ -79,7 +85,7 @@ export function buildNativeWallpaperScene(
       copy.title,
       {
         x: CONTENT_LEFT,
-        y: composition.top + (composition.headerHeight - 51) / 2,
+        y: headerTop + (headerHeight - 51) / 2,
         width: CONTENT_WIDTH,
         height: 51,
       },
@@ -97,7 +103,7 @@ export function buildNativeWallpaperScene(
       copy.subtitle,
       {
         x: CONTENT_LEFT,
-        y: composition.top + (composition.headerHeight - 36) / 2,
+        y: headerTop + (headerHeight - 36) / 2,
         width: CONTENT_WIDTH,
         height: 36,
       },
@@ -108,34 +114,60 @@ export function buildNativeWallpaperScene(
     );
   }
 
-  const calendarTop = composition.calendarTop;
-  const calendarBottom = calendarTop + composition.calendarHeight;
-
-  if (model.timeRange === 'week') {
-    addWeek(scene, model, calendarTop, calendarBottom);
+  if (composition) {
+    addCalendar(
+      scene,
+      model,
+      composition.calendarTop,
+      composition.calendarTop + composition.calendarHeight,
+    );
+    addEvents(scene, model, composition.eventsTop);
+  } else if (model.presentation === 'agenda') {
+    addEvents(scene, model, bounds.presentationTop);
+  } else if (model.presentation === 'countdown') {
+    addCountdown(scene, model, bounds.presentationTop, bounds.presentationBottom);
+  } else if (model.presentation === 'progress') {
+    addPeriodProgress(scene, model, bounds.presentationTop);
+    addCalendar(scene, model, bounds.calendarTop!, bounds.calendarBottom!);
   } else {
-    addMonths(scene, model, calendarTop, calendarBottom);
+    addMinimal(scene, model, bounds.presentationTop, bounds.presentationBottom);
   }
 
-  addEvents(scene, model, composition.eventsTop);
+  if (scene.commands.length > 600 || JSON.stringify(scene).length > 200000) {
+    throw new NativeSceneBudgetError();
+  }
 
   return scene;
 }
 
-function addWeek(
+function addCalendar(
   scene: NativeWallpaperScene,
   model: WallpaperModel,
   top: number,
   bottom: number,
 ): void {
-  const geometry = getDayCardGeometry(model.presentation === 'hybrid');
-  const cardTop = top + (bottom - top - geometry.height) / 2;
+  if (model.timeRange === 'week' || model.timeRange === 'rolling14') {
+    addDayRows(scene, model, top, bottom);
+  } else {
+    addMonths(scene, model, top, bottom);
+  }
+}
+
+function addDayRows(
+  scene: NativeWallpaperScene,
+  model: WallpaperModel,
+  top: number,
+  bottom: number,
+): void {
+  const { geometry, rowGap } = getDayRowsLayout(model, bottom - top);
   const contentHeight = geometry.labelSize * 1.2 + geometry.labelGap + geometry.size;
-  const labelTop = cardTop + (geometry.height - contentHeight) / 2;
   const cardGap = (CONTENT_WIDTH - 7 * geometry.width) / 6;
 
   for (const [index, cell] of model.cells.entries()) {
-    const left = CONTENT_LEFT + index * (geometry.width + cardGap);
+    const row = Math.floor(index / 7);
+    const cardTop = top + row * (geometry.height + rowGap);
+    const labelTop = cardTop + (geometry.height - contentHeight) / 2;
+    const left = CONTENT_LEFT + (index % 7) * (geometry.width + cardGap);
 
     addText(
       scene,
@@ -146,7 +178,7 @@ function addWeek(
         width: geometry.width,
         height: 30,
       },
-      model.theme.text,
+      isGroupedCalendarLayout(model) ? model.theme.text : model.theme.subtext,
       geometry.labelSize,
       'semibold',
       'center',
@@ -170,25 +202,26 @@ function addMonths(
   top: number,
   bottom: number,
 ): void {
-  const collection = getMonthCollectionGeometry(model);
-  const geometry = getMonthGeometry(collection.scale, true);
+  const collection = getMonthCollectionLayout(model, bottom - top);
+  const geometry = collection.geometry;
   const showLabel = model.monthGroups.length > 1;
   const labelHeight = showLabel ? geometry.labelSize * 1.2 + geometry.labelGap : 0;
-  const weekdayHeight = geometry.weekdaySize * 1.2;
-  const groupHeight = getMonthGroupHeight(collection.scale, showLabel, true);
+  const weekdayHeight = geometry.showWeekdays ? geometry.weekdaySize * 1.2 : 0;
   const groupWidth = (CONTENT_WIDTH * collection.widthPercent) / 100;
   const groupGap =
     collection.columns === 1
       ? 0
       : (CONTENT_WIDTH - collection.columns * groupWidth) / (collection.columns - 1);
-  const groupTop = top + (bottom - top - groupHeight) / 2;
 
   for (const [groupIndex, group] of model.monthGroups.entries()) {
-    const left = CONTENT_LEFT + groupIndex * (groupWidth + groupGap) + geometry.paddingX;
+    const row = Math.floor(groupIndex / collection.columns);
+    const column = groupIndex % collection.columns;
+    const groupTop = top + row * (collection.groupHeight + collection.rowGap);
+    const left = CONTENT_LEFT + column * (groupWidth + groupGap) + geometry.paddingX;
     const width = groupWidth - geometry.paddingX * 2;
     const labelTop = groupTop + geometry.paddingY;
     const weekdayTop = labelTop + labelHeight;
-    const cellTop = weekdayTop + weekdayHeight + 7;
+    const cellTop = weekdayTop + weekdayHeight + (geometry.showWeekdays ? 7 : 0);
     const cellWidth = width / 7;
 
     if (showLabel) {
@@ -207,7 +240,10 @@ function addMonths(
       );
     }
 
-    for (const [index, label] of WEEKDAY_LABELS.entries()) {
+    for (const [index, label] of (geometry.showWeekdays
+      ? WEEKDAY_LABELS
+      : []
+    ).entries()) {
       addText(
         scene,
         label,
@@ -217,7 +253,7 @@ function addMonths(
           width: cellWidth,
           height: weekdayHeight,
         },
-        model.theme.text,
+        isGroupedCalendarLayout(model) ? model.theme.text : model.theme.subtext,
         geometry.weekdaySize,
         'semibold',
         'center',
@@ -290,6 +326,256 @@ function addDot(
   });
 }
 
+function addPeriodProgress(
+  scene: NativeWallpaperScene,
+  model: WallpaperModel,
+  top: number,
+): void {
+  if (model.period.kind === 'rolling') {
+    addText(
+      scene,
+      '14-day outlook',
+      { x: CONTENT_LEFT, y: top, width: CONTENT_WIDTH, height: 75 },
+      model.theme.current,
+      62,
+      'semibold',
+    );
+    addText(
+      scene,
+      'A moving window from today',
+      { x: CONTENT_LEFT, y: top + 85, width: CONTENT_WIDTH, height: 32 },
+      model.theme.subtext,
+      26,
+    );
+
+    return;
+  }
+
+  addText(
+    scene,
+    `${model.period.percentComplete}%`,
+    { x: CONTENT_LEFT, y: top, width: 400, height: 94 },
+    model.theme.current,
+    78,
+    'semibold',
+  );
+  addText(
+    scene,
+    formatPeriodRemaining(model.period.daysLeft),
+    { x: CONTENT_LEFT + 420, y: top + 47, width: CONTENT_WIDTH - 420, height: 32 },
+    model.theme.subtext,
+    26,
+    'system',
+    'right',
+  );
+  const track = {
+    kind: 'roundRect' as const,
+    x: CONTENT_LEFT,
+    y: top + 100,
+    width: CONTENT_WIDTH,
+    height: 14,
+    radius: 7,
+    fill: model.theme.future,
+  };
+
+  scene.commands.push(track);
+
+  if (model.period.percentComplete > 0) {
+    const width = (CONTENT_WIDTH * model.period.percentComplete) / 100;
+
+    scene.commands.push({
+      ...track,
+      width,
+      radius: Math.min(track.radius, width / 2),
+      fill: model.theme.current,
+    });
+  }
+}
+
+function addEmptyEvents(
+  scene: NativeWallpaperScene,
+  model: WallpaperModel,
+  top: number,
+  height: number,
+  compact = false,
+): void {
+  const size = compact ? 24 : 38;
+
+  addText(
+    scene,
+    'No upcoming events',
+    {
+      x: CONTENT_LEFT,
+      y: top + (height - size * 1.2) / 2,
+      width: CONTENT_WIDTH,
+      height: size * 1.2,
+    },
+    model.theme.text,
+    size,
+    'semibold',
+    compact ? 'left' : 'center',
+  );
+}
+
+function addCountdown(
+  scene: NativeWallpaperScene,
+  model: WallpaperModel,
+  top: number,
+  bottom: number,
+): void {
+  const event = model.events[0];
+
+  if (!event) {
+    addEmptyEvents(scene, model, top, bottom - top);
+
+    return;
+  }
+
+  // The installed v1 adapter accepts fonts up to 80px; no script update is required.
+  const blockHeight = event.daysLeft === 0 ? 196 : 240;
+  const start = top + (bottom - top - blockHeight) / 2;
+
+  addText(
+    scene,
+    event.daysLeft === 0 ? 'Today' : String(event.daysLeft),
+    {
+      x: CONTENT_LEFT,
+      y: start,
+      width: CONTENT_WIDTH,
+      height: 96,
+    },
+    model.theme.current,
+    80,
+    'semibold',
+    'center',
+  );
+
+  if (event.daysLeft > 0) {
+    addText(
+      scene,
+      event.daysLeft === 1 ? 'day away' : 'days away',
+      {
+        x: CONTENT_LEFT,
+        y: start + 106,
+        width: CONTENT_WIDTH,
+        height: 36,
+      },
+      model.theme.subtext,
+      30,
+      'system',
+      'center',
+    );
+  }
+
+  addText(
+    scene,
+    event.name,
+    {
+      x: CONTENT_LEFT,
+      y: start + blockHeight - 58,
+      width: CONTENT_WIDTH,
+      height: 58,
+    },
+    model.theme.text,
+    48,
+    'semibold',
+    'center',
+    true,
+  );
+}
+
+function addMinimal(
+  scene: NativeWallpaperScene,
+  model: WallpaperModel,
+  top: number,
+  bottom: number,
+): void {
+  const height = 114 + 70 + 1 + 54 + 144;
+  const start = top + (bottom - top - height) / 2;
+  const dividerTop = start + 114 + 70;
+
+  addPeriodProgress(scene, model, start);
+  scene.commands.push({
+    kind: 'roundRect',
+    x: CONTENT_LEFT,
+    y: dividerTop,
+    width: CONTENT_WIDTH,
+    height: 1,
+    radius: 0.5,
+    fill: model.theme.future,
+  });
+  const eventTop = dividerTop + 1 + 54;
+
+  if (model.events[0]) {
+    addEventRow(scene, model, model.events[0], eventTop);
+  } else {
+    addEmptyEvents(scene, model, eventTop, 144, true);
+  }
+}
+
+function addEventRow(
+  scene: NativeWallpaperScene,
+  model: WallpaperModel,
+  event: DisplayEvent,
+  top: number,
+): void {
+  const layout = getWallpaperEventLayout(model);
+  const nameSize = layout.compact ? 34 : 40;
+  const nameHeight = Math.ceil(nameSize * 1.2);
+  const countdownSize = layout.compact ? 30 : 32;
+  const countdownHeight = Math.ceil(countdownSize * 1.2);
+  const gap = layout.compact ? 12 : 18;
+  const textTop = top + (layout.rowHeight - (nameHeight + gap + 3)) / 2;
+
+  addText(
+    scene,
+    event.name,
+    { x: CONTENT_LEFT, y: textTop, width: CONTENT_WIDTH - 168, height: nameHeight },
+    model.theme.text,
+    nameSize,
+    'medium',
+    'left',
+    true,
+  );
+  addText(
+    scene,
+    event.countdownLabel,
+    {
+      x: CONTENT_LEFT + CONTENT_WIDTH - 140,
+      y: textTop + (nameHeight - countdownHeight) / 2,
+      width: 140,
+      height: countdownHeight,
+    },
+    event.daysLeft <= 1
+      ? model.theme.current
+      : layout.compact
+        ? model.theme.text
+        : model.theme.subtext,
+    countdownSize,
+    'medium',
+    'right',
+  );
+  const timer = {
+    kind: 'roundRect' as const,
+    x: CONTENT_LEFT,
+    y: textTop + nameHeight + gap,
+    width: CONTENT_WIDTH,
+    height: 3,
+    radius: 1.5,
+    fill: model.theme.future,
+  };
+
+  scene.commands.push(timer);
+
+  if (event.progressPercent > 0) {
+    scene.commands.push({
+      ...timer,
+      width: (CONTENT_WIDTH * event.progressPercent) / 100,
+      fill: model.theme.current,
+    });
+  }
+}
+
 function addEvents(
   scene: NativeWallpaperScene,
   model: WallpaperModel,
@@ -299,76 +585,15 @@ function addEvents(
   const visible = model.events.slice(0, layout.limit);
 
   if (!visible.length) {
-    addText(
-      scene,
-      'No upcoming events',
-      {
-        x: CONTENT_LEFT,
-        y: top + (layout.slotHeight - 30) / 2,
-        width: CONTENT_WIDTH,
-        height: 30,
-      },
-      model.theme.text,
-      24,
-      'semibold',
-    );
+    addEmptyEvents(scene, model, top, layout.slotHeight, layout.compact);
 
     return;
   }
 
   for (const [index, event] of visible.entries()) {
     const rowTop = top + index * (layout.rowHeight + layout.rowGap);
-    const textTop = rowTop + (layout.rowHeight - (41 + 12 + 3)) / 2;
 
-    addText(
-      scene,
-      event.name,
-      {
-        x: CONTENT_LEFT,
-        y: textTop,
-        width: CONTENT_WIDTH - 168,
-        height: 41,
-      },
-      model.theme.text,
-      34,
-      'medium',
-      'left',
-      true,
-    );
-    addText(
-      scene,
-      event.countdownLabel,
-      {
-        x: CONTENT_LEFT + CONTENT_WIDTH - 140,
-        y: textTop + 5,
-        width: 140,
-        height: 36,
-      },
-      event.daysLeft <= 1 ? model.theme.current : model.theme.text,
-      30,
-      'medium',
-      'right',
-    );
-
-    const timer = {
-      kind: 'roundRect' as const,
-      x: CONTENT_LEFT,
-      y: textTop + 41 + 12,
-      width: CONTENT_WIDTH,
-      height: 3,
-      radius: 1.5,
-      fill: model.theme.future,
-    };
-
-    scene.commands.push(timer);
-
-    if (event.progressPercent > 0) {
-      scene.commands.push({
-        ...timer,
-        width: (CONTENT_WIDTH * event.progressPercent) / 100,
-        fill: model.theme.current,
-      });
-    }
+    addEventRow(scene, model, event, rowTop);
   }
 
   const overflow = model.events.length - visible.length;
@@ -385,10 +610,10 @@ function addEvents(
           (visible.length - 1) * layout.rowGap +
           8,
         width: CONTENT_WIDTH,
-        height: 24,
+        height: layout.compact ? 24 : 29,
       },
       model.theme.subtext,
-      20,
+      layout.compact ? 20 : 24,
     );
   }
 }

@@ -12,30 +12,39 @@ draws that scene on the iPhone using its native system font and returns a PNG to
 Shortcuts. Shortcuts still applies the wallpaper. No Apple font file is copied into
 the project, downloaded, or hosted on Vercel.
 
-The prototype supports week, month and quarter in Calendar or Hybrid presentation,
-with either clock profile and the saved built-in/custom theme. It keeps the dots,
-weekday labels, centered quarter summary, two visible events, `+N more`, and thin
-event timer lines. The current saved Telegram/dashboard settings remain authoritative.
+The prototype supports all nine presets: Week, Month, Quarter, Agenda, Rolling 14
+days, Countdown, Year progress, Month + next events, and Minimal. It also supports
+all 60 combinations of the five ranges, six presentations and two clock profiles,
+including saved built-in/custom themes. The current Telegram/dashboard settings
+remain authoritative; a preset is not silently replaced by a different view.
 
-The supported layouts group the summary, calendar and events within the existing
-clock/notification clear zones. Quarter dots are 32px, quarter weekday labels are
-larger and brighter, and event countdowns use clearer text. Event lines stay 3px
-thin. Two event rows are shown at most, followed by `+N more` when needed; printed
-event dates and the redundant quarter heading stay hidden.
+Calendar/Hybrid headings start at the top of the existing clock-safe band, with
+the grid directly below. Event rows have an independent preferred anchor, so
+moving the calendar up does not pull the events up with it. Dense grids may move
+the event block down only as far as needed to avoid overlap. Quarter dots remain
+32px, weekdays remain clear, and event timer lines remain 3px thin. Compact lists
+show two events plus `+N more`; Agenda shows five events (four with the large clock),
+Minimal and Countdown show one, and Progress has no event list. Event dates and
+the redundant quarter heading stay hidden.
 
-Month rows use a 100px pitch (90px with the large clock), and quarter rows use
-52px, without enlarging the dots. Native dot and event-ring origins align to whole
-pixels, retaining normal circle antialiasing. Week and the legacy year/rolling
-layouts keep their spacing.
+Month rows use a 100px pitch (90px with the large clock). Quarter rows spread from
+52px up to 72px when space permits, without enlarging the dots. Year uses a 4×3
+month collection; Rolling 14 days uses two rows of seven. Extra space between
+month blocks is distributed consistently by both renderers. Native dot and
+event-ring origins align to whole pixels, retaining normal circle antialiasing.
 
 These refinements change server-side drawing data only. The scene stays at version 1:
 existing Scriptable code and native Shortcut URLs do not need changing. After the
 deployment, rerun the same Shortcut to fetch the revised layout.
 
-Agenda, rolling 14 days, year, Countdown, Progress and Minimal are not supported in
-this prototype. The native URL returns a clear error for those settings; it does
-not silently switch the view or fall back to a different font. Switch to a supported
-view or use the original PNG Shortcut.
+The installed adapter accepts native text up to 80px. Countdown therefore uses
+an 80px native number rather than the PNG renderer's oversized number. Neither
+path changes the actual iOS clock.
+
+The native drawing budget stays at 600 commands and 200,000 serialized characters.
+Normal accounts have at most seven tracked events and fit that budget, including
+a leap-year grid with event rings. An oversized public example returns a private,
+non-cacheable 422 `native_scene_too_large` error rather than silently dropping markers.
 
 ## Set up a separate test Shortcut
 
@@ -91,7 +100,7 @@ If Scriptable is terminated for memory or fails inside the extension, try its
 
 ## Verify on the iPhone
 
-Check all three ranges and both clock profiles. Confirm genuine system-font text,
+Check all nine presets and both clock profiles. Confirm genuine system-font text,
 crisp dots, readable weekday labels, full month names, event-ring alignment and
 three-pixel event tracks. Test a long title, accented characters and emoji. Event
 names currently use conservative single-line truncation because DrawContext does
@@ -112,7 +121,7 @@ npm run check
 npm run preview:native-data -- /private/tmp/calendar-native-fixtures
 ```
 
-The second command writes 12 deterministic JSON scenes using synthetic events.
+The second command writes 60 deterministic JSON scenes using synthetic events.
 It does not render with iOS or prove the Scriptable/Shortcuts integration. Tests run
 the actual Scriptable script in a simulated native API environment; a native Mac
 preview is also only a visual aid, not an iPhone execution result.

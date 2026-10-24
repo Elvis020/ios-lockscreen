@@ -6,10 +6,12 @@ import {
   CONTENT_RIGHT,
   getCalendarComposition,
   getDayCardGeometry,
-  getMonthCollectionGeometry,
+  getDayRowsLayout,
+  getMonthCollectionLayout,
   getMonthGeometry,
   getWallpaperEventLayout,
   getWallpaperHeaderCopy,
+  getWallpaperLayoutBounds,
   HEADER_HEIGHT,
   HEADER_TO_PRESENTATION_GAP,
   LOCK_SCREEN_CONTENT_BANDS,
@@ -220,37 +222,7 @@ function Presentation({ model }: { model: WallpaperModel }): ReactElement {
     return <Progress model={model} />;
   }
 
-  if (model.presentation === 'hybrid') {
-    return <Hybrid model={model} />;
-  }
-
-  if (model.presentation === 'minimal') {
-    return <Minimal model={model} />;
-  }
-
-  return <Calendar model={model} />;
-}
-
-function Calendar({ model }: { model: WallpaperModel }): ReactElement {
-  const layout = getWallpaperEventLayout(model);
-
-  return (
-    <div style={{ ...columnStyle, paddingBottom: layout.lift }}>
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <CalendarVisual model={model} />
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          height: layout.slotHeight,
-          flexShrink: 0,
-          marginTop: layout.sectionGap,
-        }}
-      >
-        <EventList model={model} />
-      </div>
-    </div>
-  );
+  return <Minimal model={model} />;
 }
 
 function Agenda({ model }: { model: WallpaperModel }): ReactElement {
@@ -340,28 +312,6 @@ function Progress({ model }: { model: WallpaperModel }): ReactElement {
   );
 }
 
-function Hybrid({ model }: { model: WallpaperModel }): ReactElement {
-  const layout = getWallpaperEventLayout(model);
-
-  return (
-    <div style={columnStyle}>
-      <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <CalendarVisual model={model} compact />
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          height: layout.slotHeight,
-          flexShrink: 0,
-          marginTop: layout.sectionGap,
-        }}
-      >
-        <EventList model={model} />
-      </div>
-    </div>
-  );
-}
-
 function Minimal({ model }: { model: WallpaperModel }): ReactElement {
   const event = model.events[0];
 
@@ -412,14 +362,18 @@ function DayRows({
   compact: boolean;
 }): ReactElement {
   const rows = chunk(model.cells, 7);
-  const geometry = getDayCardGeometry(compact);
+  const bounds = getWallpaperLayoutBounds(model);
+  const availableHeight =
+    (bounds.calendarBottom ?? bounds.presentationBottom) -
+    (bounds.calendarTop ?? bounds.presentationTop);
+  const { rowGap } = getDayRowsLayout(model, availableHeight, compact);
 
   return (
     <div
       style={{
         ...columnStyle,
-        justifyContent: 'center',
-        gap: geometry.gap,
+        justifyContent: 'flex-start',
+        gap: rowGap,
       }}
     >
       {rows.map((row, rowIndex) => (
@@ -475,7 +429,7 @@ function DayCard({
           display: 'flex',
           color: readable ? theme.text : theme.subtext,
           fontSize: geometry.labelSize,
-          lineHeight: readable ? 1.2 : undefined,
+          lineHeight: 1.2,
           fontWeight: 650,
           textTransform: 'uppercase',
         }}
@@ -503,15 +457,17 @@ function DayCard({
 function MonthCollection({
   model,
   groups,
-  compact = false,
 }: {
   model: WallpaperModel;
   groups: WallpaperMonthGroup[];
   compact?: boolean;
 }): ReactElement {
   const groupCount = groups.length;
-  const { columns, rows, widthPercent, scale } = getMonthCollectionGeometry(model);
-  const width = `${widthPercent}%`;
+  const bounds = getWallpaperLayoutBounds(model);
+  const availableHeight =
+    (bounds.calendarBottom ?? bounds.presentationBottom) -
+    (bounds.calendarTop ?? bounds.presentationTop);
+  const layout = getMonthCollectionLayout(model, availableHeight);
 
   return (
     <div
@@ -519,22 +475,34 @@ function MonthCollection({
         display: 'flex',
         width: '100%',
         height: '100%',
-        flexWrap: 'wrap',
-        alignContent: 'center',
-        justifyContent: columns === 1 ? 'center' : 'space-between',
-        gap: rows > 1 ? (compact ? 10 : 14) : 0,
+        flexDirection: 'column',
+        gap: layout.rowGap,
       }}
     >
-      {groups.map((group) => (
-        <MonthGroup
-          key={group.id}
-          group={group}
-          theme={model.theme}
-          width={width}
-          scale={scale}
-          showLabel={groupCount > 1}
-          readable={isGroupedCalendarLayout(model)}
-        />
+      {chunk(groups, layout.columns).map((row, index) => (
+        <div
+          key={`month-collection-row-${index}`}
+          style={{
+            display: 'flex',
+            width: '100%',
+            height: layout.groupHeight,
+            flexShrink: 0,
+            justifyContent: layout.columns === 1 ? 'center' : 'space-between',
+          }}
+        >
+          {row.map((group) => (
+            <MonthGroup
+              key={group.id}
+              group={group}
+              theme={model.theme}
+              width={`${layout.widthPercent}%`}
+              scale={layout.scale}
+              showLabel={groupCount > 1}
+              readable={isGroupedCalendarLayout(model)}
+              cellHeight={layout.geometry.cellHeight}
+            />
+          ))}
+        </div>
       ))}
     </div>
   );
@@ -547,6 +515,7 @@ function MonthGroup({
   scale,
   showLabel,
   readable,
+  cellHeight,
 }: {
   group: WallpaperMonthGroup;
   theme: WallpaperTheme;
@@ -554,6 +523,7 @@ function MonthGroup({
   scale: MonthScale;
   showLabel: boolean;
   readable: boolean;
+  cellHeight: number;
 }): ReactElement {
   const rows = chunk(group.cells, 7);
   const geometry = getMonthGeometry(scale, readable);
@@ -574,7 +544,7 @@ function MonthGroup({
             marginBottom: geometry.labelGap,
             color: theme.text,
             fontSize: geometry.labelSize,
-            lineHeight: readable ? 1.2 : undefined,
+            lineHeight: 1.2,
             fontWeight: 650,
           }}
         >
@@ -592,7 +562,7 @@ function MonthGroup({
                 justifyContent: 'center',
                 color: readable ? theme.text : theme.subtext,
                 fontSize: geometry.weekdaySize,
-                lineHeight: readable ? 1.2 : undefined,
+                lineHeight: 1.2,
                 fontWeight: 650,
               }}
             >
@@ -608,7 +578,7 @@ function MonthGroup({
               key={cell?.date ?? `blank-${rowIndex}-${cellIndex}`}
               cell={cell}
               theme={theme}
-              height={geometry.cellHeight}
+              height={cellHeight}
               scale={scale}
             />
           ))}

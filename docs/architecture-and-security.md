@@ -94,11 +94,17 @@ still private data. Native responses and errors always disable browser/CDN cachi
 
 Only the existing read-only wallpaper key is accepted for personalized native data;
 legacy management-token wallpaper URLs continue to work for PNG only. Supported
-native combinations are week/month/quarter with calendar/hybrid. Other saved settings
-return 422 rather than an inaccurate substitute view. Unknown `format` values retain
-the existing PNG behavior for compatibility.
+native combinations cover all five ranges, six presentations and two clock profiles.
+Year uses a 4×3 month collection, and rolling 14 days uses two rows of seven dots.
+The existing scene-v1 adapter remains compatible. Oversized public marker scenes
+return a private, non-cacheable 422 rather than dropping markers. Unknown `format`
+values retain the existing PNG behavior for compatibility.
 
 Both renderers use shared geometry and event-cap calculations in `wallpaperLayout.ts`.
+Calendar/Hybrid content is top-anchored below the clock; compact event slots have
+independent preferred positions (1680px standard, 1772px large-clock) and move down
+only when a grid needs more clearance. Quarter cells can expand vertically to use
+the available band, and multi-row month collections distribute space between rows.
 The native scene is interpreted on the iPhone by a strict, network-free Scriptable
 script using the native Font APIs. The script returns PNG bytes as base64 text to
 Shortcuts without saving files or uploading font data. The original PNG pathway and

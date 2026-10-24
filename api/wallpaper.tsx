@@ -10,7 +10,7 @@ import {
 } from '../lib/preferences';
 import {
   buildNativeWallpaperScene,
-  UnsupportedNativeLayoutError,
+  NativeSceneBudgetError,
 } from '../lib/nativeWallpaperScene';
 import { isRedisConfigurationError } from '../lib/redis';
 import { getUser, getUserByWallpaperKey } from '../lib/tokenManager';
@@ -98,13 +98,11 @@ export default async function handler(req: Request) {
     return response;
   } catch (error) {
     if (native) {
-      if (error instanceof UnsupportedNativeLayoutError) {
+      if (error instanceof NativeSceneBudgetError) {
         return nativeJsonResponse(
           {
-            error: 'unsupported_native_layout',
+            error: 'native_scene_too_large',
             message: error.message,
-            supportedRanges: ['week', 'month', 'quarter'],
-            supportedPresentations: ['calendar', 'hybrid'],
           },
           422,
         );

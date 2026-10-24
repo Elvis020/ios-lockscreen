@@ -1,18 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildNativeWallpaperScene,
-  UnsupportedNativeLayoutError,
+  NativeSceneBudgetError,
 } from '../lib/nativeWallpaperScene';
 import { LOCK_SCREEN_PROFILES, PRESENTATIONS, TIME_RANGES } from '../lib/preferences';
 import {
   CALENDAR_DOT_GEOMETRY,
   getCalendarComposition,
   getMonthGeometry,
+  getMonthCollectionLayout,
+  getWallpaperEventLayout,
   getWallpaperLayoutBounds,
   WALLPAPER_HEIGHT,
   WALLPAPER_WIDTH,
 } from '../lib/wallpaperLayout';
 import { buildWallpaperModel } from '../lib/wallpaperModel';
+import { dateAtPeriodDay } from '../lib/periodCalculator';
 
 const date = new Date('2026-10-24T12:00:00Z');
 const publicEvents = [
@@ -22,10 +25,10 @@ const publicEvents = [
 ];
 
 describe('native wallpaper scene', () => {
-  it('builds each supported layout inside the shared clock-safe band', () => {
+  it('builds all sixty range, presentation and profile combinations inside the clock-safe band', () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
-      for (const timeRange of ['week', 'month', 'quarter'] as const) {
-        for (const presentation of ['calendar', 'hybrid'] as const) {
+      for (const timeRange of TIME_RANGES) {
+        for (const presentation of PRESENTATIONS) {
           const model = buildWallpaperModel({
             date,
             timeRange,
@@ -43,10 +46,11 @@ describe('native wallpaper scene', () => {
             height: WALLPAPER_HEIGHT,
           });
           expect(scene.commands.length).toBeLessThan(600);
-          expect(text.map(({ value }) => value)).toContain('Réunion 🎉');
-          expect(text.map(({ value }) => value)).toContain('Product launch');
-          expect(text.map(({ value }) => value)).not.toContain('Team offsite');
-          expect(text.map(({ value }) => value)).toContain('+1 more');
+          const visible = model.events.slice(0, getWallpaperEventLayout(model).limit);
+
+          for (const event of visible) {
+            expect(text.map(({ value }) => value)).toContain(event.name);
+          }
 
           for (const command of scene.commands) {
             const width = command.kind === 'circle' ? command.diameter : command.width;
@@ -71,11 +75,20 @@ describe('native wallpaper scene', () => {
             }
           }
 
-          const timers = scene.commands.filter((command) => command.kind === 'roundRect');
+          const timers = scene.commands.filter(
+            (command) => command.kind === 'roundRect' && command.height === 3,
+          );
 
-          expect(timers).toHaveLength(4);
+          expect(timers).toHaveLength(
+            presentation === 'countdown' ? 0 : visible.length * 2,
+          );
           expect(
-            timers.every(({ height, radius }) => height === 3 && radius === 1.5),
+            timers.every(
+              (command) =>
+                command.kind === 'roundRect' &&
+                command.height === 3 &&
+                command.radius === 1.5,
+            ),
           ).toBe(true);
         }
       }
@@ -134,7 +147,13 @@ describe('native wallpaper scene', () => {
           const size =
             timeRange === 'quarter' ? 32 : lockScreenProfile === 'standard' ? 68 : 64;
           const pitch =
-            timeRange === 'quarter' ? 52 : lockScreenProfile === 'standard' ? 100 : 90;
+            timeRange === 'quarter' ? 72 : lockScreenProfile === 'standard' ? 100 : 90;
+          const composition = getCalendarComposition(model)!;
+
+          expect(
+            getMonthCollectionLayout(model, composition.calendarHeight).geometry
+              .cellHeight,
+          ).toBe(pitch);
           const dots = buildNativeWallpaperScene(model).commands.filter(
             (command) => command.kind === 'circle' && command.diameter === size,
           );
@@ -242,22 +261,107 @@ describe('native wallpaper scene', () => {
     );
   });
 
-  it('rejects every unsupported combination instead of silently changing the saved view', () => {
-    for (const timeRange of TIME_RANGES) {
+  it('draws the year and leap year as twelve month grids without losing tracked markers', () => {
+    for (const [year, days] of [
+      [2026, 365],
+      [2028, 366],
+    ]) {
+      const events = Array.from({ length: 7 }, (_, index) => ({
+        name: `Milestone ${index + 1}`,
+        date: dateAtPeriodDay(`${year}-01-01`, index + 10),
+      }));
+      const model = buildWallpaperModel({
+        date: new Date(`${year}-01-01T12:00:00Z`),
+        timeRange: 'year',
+        publicEvents: events,
+      });
+      const scene = buildNativeWallpaperScene(model);
+      const dots = scene.commands.filter(
+        (command) => command.kind === 'circle' && command.diameter === 16,
+      );
+      const monthLabels = scene.commands.filter(
+        (command) =>
+          command.kind === 'text' &&
+          model.monthGroups.some(({ label }) => label === command.value),
+      );
+
+      expect(dots).toHaveLength(days);
+      expect(monthLabels).toHaveLength(12);
+      expect(new Set(monthLabels.map(({ x }) => x)).size).toBe(4);
+      expect(new Set(monthLabels.map(({ y }) => y)).size).toBe(3);
+      expect(
+        scene.commands.filter(
+          (command) => command.kind === 'circle' && command.diameter === 24,
+        ),
+      ).toHaveLength(7);
+      expect(scene.commands.length).toBeLessThanOrEqual(600);
+    }
+  });
+
+  it('keeps rolling fourteen days in two rows of seven across the year boundary', () => {
+    const model = buildWallpaperModel({
+      date: new Date('2026-12-25T12:00:00Z'),
+      timeRange: 'rolling14',
+    });
+    const scene = buildNativeWallpaperScene(model);
+    const dots = scene.commands.filter(
+      (command) => command.kind === 'circle' && command.diameter === 100,
+    );
+
+    expect(dots).toHaveLength(14);
+    expect(new Set(dots.map(({ y }) => y)).size).toBe(2);
+    expect(new Set(dots.map(({ x }) => x)).size).toBe(7);
+    expect(model.cells.at(-1)?.date).toBe('2027-01-07');
+  });
+
+  it('uses the configured list caps and presentation-specific event timers', () => {
+    const publicEvents = Array.from({ length: 7 }, (_, index) => ({
+      name: `Event ${index + 1}`,
+      date: `2026-10-${index + 25}`,
+    }));
+
+    for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
       for (const presentation of PRESENTATIONS) {
-        if (
-          ['week', 'month', 'quarter'].includes(timeRange) &&
-          ['calendar', 'hybrid'].includes(presentation)
-        ) {
-          continue;
+        const model = buildWallpaperModel({
+          date,
+          timeRange: 'rolling14',
+          presentation,
+          lockScreenProfile,
+          publicEvents,
+        });
+        const scene = buildNativeWallpaperScene(model);
+        const values = scene.commands
+          .filter((command) => command.kind === 'text')
+          .map(({ value }) => value);
+        const visible = getWallpaperEventLayout(model).limit;
+
+        expect(values.filter((value) => /^Event \d/.test(value))).toHaveLength(visible);
+        expect(
+          scene.commands.filter(
+            (command) => command.kind === 'roundRect' && command.height === 3,
+          ),
+        ).toHaveLength(presentation === 'countdown' ? 0 : visible * 2);
+        expect(values.join(' ')).not.toMatch(/2026-10-\d{2}|Oct \d/);
+
+        if (['calendar', 'hybrid', 'agenda'].includes(presentation)) {
+          expect(values).toContain(`+${7 - visible} more`);
+        } else {
+          expect(values.some((value) => /^\+\d/.test(value))).toBe(false);
         }
-
-        const model = buildWallpaperModel({ date, timeRange, presentation });
-
-        expect(() => buildNativeWallpaperScene(model)).toThrow(
-          UnsupportedNativeLayoutError,
-        );
       }
     }
+  });
+
+  it('rejects oversized public marker scenes explicitly instead of dropping rings', () => {
+    const model = buildWallpaperModel({
+      date: new Date('2028-01-01T12:00:00Z'),
+      timeRange: 'year',
+      publicEvents: Array.from({ length: 366 }, (_, index) => ({
+        name: `Event ${index}`,
+        date: dateAtPeriodDay('2028-01-01', index + 1),
+      })),
+    });
+
+    expect(() => buildNativeWallpaperScene(model)).toThrow(NativeSceneBudgetError);
   });
 });

@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryRedis } from './helpers/inMemoryRedis';
+import {
+  WALLPAPER_PRESET_IDS,
+  LOCK_SCREEN_PROFILES,
+  TIME_RANGES,
+  PRESENTATIONS,
+} from '../lib/preferences';
+import { dateAtPeriodDay } from '../lib/periodCalculator';
 
 let redis: InMemoryRedis;
 
@@ -91,6 +98,35 @@ describe('native wallpaper API', () => {
     expect(response.headers.get('cache-control')).toContain('no-store');
   });
 
+  it('honors a saved native Year view instead of contradictory public query settings', async () => {
+    await seedUser({
+      timeRange: 'year',
+      presentation: 'progress',
+      lockScreenProfile: 'large-clock',
+    });
+    const { default: handler } = await import('../api/wallpaper');
+    const response = await handler(
+      new Request(
+        'https://example.com/api/wallpaper?format=native&wallpaperKey=read-only-test&view=quarter&profile=standard',
+      ),
+    );
+    const body = await response.text();
+    const scene = JSON.parse(body);
+
+    expect(response.status).toBe(200);
+    expect(
+      scene.commands.filter(
+        (command: { kind: string; diameter: number }) =>
+          command.kind === 'circle' && command.diameter === 14,
+      ),
+    ).toHaveLength(365);
+    expect(body).toContain('January');
+    expect(body).toContain('December');
+    expect(body).not.toContain('private-owner-token');
+    expect(body).not.toContain('read-only-test');
+    expect(response.headers.get('cache-control')).toContain('private, no-store');
+  });
+
   it('does not treat an explicitly empty wallpaper key as a public request', async () => {
     const { default: handler } = await import('../api/wallpaper');
     const response = await handler(
@@ -129,14 +165,52 @@ describe('native wallpaper API', () => {
     },
   );
 
-  it('reports unsupported modes as non-cacheable JSON errors', async () => {
+  it('supports every exposed preset and all configurable native layouts without caching', async () => {
     const { default: handler } = await import('../api/wallpaper');
+
+    for (const profile of LOCK_SCREEN_PROFILES) {
+      const queries = [
+        ...WALLPAPER_PRESET_IDS.map((view) => new URLSearchParams({ view, profile })),
+        ...TIME_RANGES.flatMap((range) =>
+          PRESENTATIONS.map(
+            (presentation) => new URLSearchParams({ range, presentation, profile }),
+          ),
+        ),
+      ];
+
+      for (const query of queries) {
+        query.set('format', 'native');
+        const response = await handler(
+          new Request(`https://example.com/api/wallpaper?${query}`),
+        );
+
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({
+          version: 1,
+          width: 1284,
+          height: 2778,
+        });
+        expect(response.headers.get('cache-control')).toBe(
+          'private, no-store, max-age=0',
+        );
+      }
+    }
+  });
+
+  it('returns a bounded non-cacheable error for an oversized public scene', async () => {
+    vi.setSystemTime(new Date('2028-01-01T12:00:00Z'));
+    const { default: handler } = await import('../api/wallpaper');
+    const events = Array.from(
+      { length: 366 },
+      (_, index) => `Event${index}:${dateAtPeriodDay('2028-01-01', index + 1)}`,
+    ).join(',');
+    const query = new URLSearchParams({ view: 'year', format: 'native', events });
     const response = await handler(
-      new Request('https://example.com/api/wallpaper?format=native&view=agenda'),
+      new Request(`https://example.com/api/wallpaper?${query}`),
     );
 
     expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ error: 'unsupported_native_layout' });
+    expect(await response.json()).toMatchObject({ error: 'native_scene_too_large' });
     expect(response.headers.get('cache-control')).toContain('no-store');
   });
 
@@ -168,7 +242,7 @@ describe('native wallpaper API', () => {
   });
 });
 
-async function seedUser(): Promise<void> {
+async function seedUser(selection: Record<string, string> = {}): Promise<void> {
   const today = new Date().toISOString().slice(0, 10);
 
   await redis.set('wallpaper:read-only-test', 'private-owner-token');
@@ -217,5 +291,6 @@ async function seedUser(): Promise<void> {
     ],
     cachedCalAt: Date.now(),
     telegram: { chatId: 'private-chat-id', linkedAt: today },
+    ...selection,
   });
 }

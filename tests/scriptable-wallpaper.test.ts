@@ -3,6 +3,7 @@ import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import { buildNativeWallpaperScene } from '../lib/nativeWallpaperScene';
 import { buildWallpaperModel } from '../lib/wallpaperModel';
+import { LOCK_SCREEN_PROFILES, PRESENTATIONS, TIME_RANGES } from '../lib/preferences';
 
 const source = readFileSync(
   new URL('../scripts/scriptable/render-wallpaper.js', import.meta.url),
@@ -110,10 +111,10 @@ describe('Scriptable native wallpaper adapter (simulated runtime)', () => {
     },
   );
 
-  it('runs all twelve supported range/presentation/profile scenes through validation', () => {
-    for (const lockScreenProfile of ['standard', 'large-clock'] as const) {
-      for (const timeRange of ['week', 'month', 'quarter'] as const) {
-        for (const presentation of ['calendar', 'hybrid'] as const) {
+  it('runs all sixty range/presentation/profile scenes through the installed adapter', () => {
+    for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+      for (const timeRange of TIME_RANGES) {
+        for (const presentation of PRESENTATIONS) {
           const data = buildNativeWallpaperScene(
             buildWallpaperModel({
               date: new Date('2026-10-24T12:00:00Z'),
@@ -128,9 +129,40 @@ describe('Scriptable native wallpaper adapter (simulated runtime)', () => {
           harness.run();
 
           expect(harness.output).toHaveBeenCalledOnce();
+
+          const empty = runtime(
+            buildNativeWallpaperScene(
+              buildWallpaperModel({
+                date: new Date('2028-01-01T12:00:00Z'),
+                timeRange,
+                presentation,
+                lockScreenProfile,
+              }),
+            ),
+          );
+
+          expect(
+            () => empty.run(),
+            `${timeRange}/${presentation}/${lockScreenProfile} empty`,
+          ).not.toThrow();
+          expect(empty.output).toHaveBeenCalledOnce();
         }
       }
     }
+  });
+
+  it('accepts a one-percent progress fill at the start of a quarter', () => {
+    const model = buildWallpaperModel({
+      date: new Date('2028-01-01T12:00:00Z'),
+      timeRange: 'quarter',
+      presentation: 'progress',
+    });
+    const data = buildNativeWallpaperScene(model);
+    const harness = runtime(data);
+
+    expect(model.period.percentComplete).toBe(1);
+    expect(() => harness.run()).not.toThrow();
+    expect(harness.output).toHaveBeenCalledOnce();
   });
 
   it.each([

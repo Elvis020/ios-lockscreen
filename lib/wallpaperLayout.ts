@@ -58,25 +58,16 @@ export interface CalendarComposition {
 export type MonthScale = 'large' | 'large-compact' | 'medium' | 'dots' | 'dots-compact';
 
 export function isGroupedCalendarLayout(model: WallpaperModel): boolean {
-  return (
-    ['week', 'month', 'quarter'].includes(model.timeRange) &&
-    ['calendar', 'hybrid'].includes(model.presentation)
-  );
+  return ['calendar', 'hybrid'].includes(model.presentation);
 }
 
 export function getWallpaperEventLayout(model: WallpaperModel): WallpaperEventLayout {
   const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
   const largeClock = model.lockScreenProfile === 'large-clock';
   const compact = model.presentation === 'calendar' || model.presentation === 'hybrid';
-  const slotHeight = isGroupedCalendarLayout(model)
+  const slotHeight = compact
     ? 204
-    : model.presentation === 'calendar'
-      ? largeClock
-        ? 216
-        : 250
-      : model.presentation === 'hybrid'
-        ? 216
-        : band.bottom - band.top - HEADER_HEIGHT - HEADER_TO_PRESENTATION_GAP;
+    : band.bottom - band.top - HEADER_HEIGHT - HEADER_TO_PRESENTATION_GAP;
   const rowHeight = compact ? 76 : 144;
   const rowGap = compact ? 20 : 40;
   const overflowHeight = compact ? 32 : 40;
@@ -126,22 +117,10 @@ export function getWallpaperLayoutBounds(model: WallpaperModel): WallpaperLayout
     };
   }
 
-  if (model.presentation === 'calendar' || model.presentation === 'hybrid') {
-    const layout = getWallpaperEventLayout(model);
-
-    return {
-      ...bounds,
-      calendarTop: presentationTop,
-      calendarBottom: band.bottom - layout.slotHeight - layout.sectionGap - layout.lift,
-      eventsTop: band.bottom - layout.slotHeight - layout.lift,
-      eventsBottom: band.bottom - layout.lift,
-    };
-  }
-
   if (model.presentation === 'progress') {
     return {
       ...bounds,
-      calendarTop: presentationTop + 144,
+      calendarTop: presentationTop + (model.timeRange === 'year' ? 144 : 162),
       calendarBottom: band.bottom,
     };
   }
@@ -153,12 +132,6 @@ export function getCalendarRequiredHeight(
   model: WallpaperModel,
   compact = false,
 ): number {
-  if (isGroupedCalendarLayout(model) && model.timeRange !== 'week') {
-    const { scale } = getMonthCollectionGeometry(model);
-
-    return Math.ceil(getMonthGroupHeight(scale, model.monthGroups.length > 1, true));
-  }
-
   if (model.timeRange === 'week' || model.timeRange === 'rolling14') {
     const rows = Math.ceil(model.cells.length / 7);
     const { height, gap } = getDayCardGeometry(compact);
@@ -166,17 +139,7 @@ export function getCalendarRequiredHeight(
     return rows * height + Math.max(0, rows - 1) * gap;
   }
 
-  const { rows, scale } = getMonthCollectionGeometry(model);
-  const groupHeight = {
-    large: 666,
-    'large-compact': 568,
-    medium: 346,
-    'dots-compact': 182,
-    dots: 210,
-  }[scale];
-  const gap = scale === 'dots-compact' ? 10 : compact ? 10 : 14;
-
-  return rows * groupHeight + Math.max(0, rows - 1) * gap;
+  return Math.ceil(getMonthCollectionLayout(model).requiredHeight);
 }
 
 export function getCalendarComposition(
@@ -189,25 +152,27 @@ export function getCalendarComposition(
   const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
   const headerHeight = 64;
   const headerGap = 8;
-  const calendarHeight = getCalendarRequiredHeight(
+  const requiredHeight = getCalendarRequiredHeight(
     model,
     model.presentation === 'hybrid',
   );
-  const eventGap = model.lockScreenProfile === 'large-clock' ? 48 : 64;
+  const calendarTop = band.top + headerHeight + headerGap;
+  const eventGap = 24;
+  const preferredEventsTop = model.lockScreenProfile === 'large-clock' ? 1772 : 1680;
+  const eventsTop = Math.max(preferredEventsTop, calendarTop + requiredHeight + eventGap);
+  const calendarHeight = eventsTop - eventGap - calendarTop;
   const eventsHeight = getWallpaperEventLayout(model).slotHeight;
-  const height = headerHeight + headerGap + calendarHeight + eventGap + eventsHeight;
-  const top = band.top + (band.bottom - band.top - height) / 2;
-  const calendarTop = top + headerHeight + headerGap;
+  const height = eventsTop + eventsHeight - band.top;
 
   return {
-    top,
+    top: band.top,
     height,
     headerHeight,
     headerGap,
     calendarTop,
     calendarHeight,
     eventGap,
-    eventsTop: calendarTop + calendarHeight + eventGap,
+    eventsTop,
     eventsHeight,
   };
 }
@@ -320,4 +285,60 @@ export function getMonthGroupHeight(
   const weekdayHeight = geometry.showWeekdays ? geometry.weekdaySize * 1.2 + 7 : 0;
 
   return geometry.paddingY * 2 + labelHeight + weekdayHeight + 6 * geometry.cellHeight;
+}
+
+export function getMonthCollectionLayout(
+  model: WallpaperModel,
+  availableHeight?: number,
+) {
+  const collection = getMonthCollectionGeometry(model);
+  const roomy = isGroupedCalendarLayout(model);
+  const base = getMonthGeometry(collection.scale, roomy);
+  const baseGroupHeight = getMonthGroupHeight(
+    collection.scale,
+    model.monthGroups.length > 1,
+    roomy,
+  );
+  const minimumGap =
+    collection.scale === 'dots-compact' || model.presentation === 'hybrid' ? 10 : 14;
+  const requiredHeight =
+    collection.rows * baseGroupHeight + Math.max(0, collection.rows - 1) * minimumGap;
+  const height = Math.max(requiredHeight, availableHeight ?? requiredHeight);
+  const extraCellSpace = Math.floor((height - requiredHeight) / (collection.rows * 6));
+  const cellHeight =
+    roomy && collection.scale === 'medium'
+      ? Math.min(72, base.cellHeight + extraCellSpace)
+      : base.cellHeight;
+  const groupHeight = baseGroupHeight + 6 * (cellHeight - base.cellHeight);
+  const rowGap =
+    collection.rows > 1
+      ? (height - collection.rows * groupHeight) / (collection.rows - 1)
+      : 0;
+
+  return {
+    ...collection,
+    geometry: { ...base, cellHeight },
+    groupHeight,
+    rowGap,
+    requiredHeight,
+  };
+}
+
+export function getDayRowsLayout(
+  model: WallpaperModel,
+  availableHeight?: number,
+  compact = model.presentation === 'hybrid',
+) {
+  const geometry = getDayCardGeometry(compact);
+  const rows = Math.ceil(model.cells.length / 7);
+  const requiredHeight = rows * geometry.height + Math.max(0, rows - 1) * geometry.gap;
+  const rowGap =
+    rows > 1 && availableHeight !== undefined
+      ? Math.min(
+          96,
+          Math.max(geometry.gap, (availableHeight - rows * geometry.height) / (rows - 1)),
+        )
+      : geometry.gap;
+
+  return { geometry, rows, rowGap, requiredHeight };
 }

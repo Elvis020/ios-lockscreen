@@ -5,6 +5,7 @@ import {
   getCalendarRequiredHeight,
   getMonthGeometry,
   getMonthGroupHeight,
+  getMonthCollectionLayout,
   getWallpaperEventLayout,
   getWallpaperLayoutBounds,
   LOCK_SCREEN_CONTENT_BANDS,
@@ -14,9 +15,9 @@ import { buildWallpaperModel } from '../lib/wallpaperModel';
 const date = new Date('2026-10-24T12:00:00Z');
 
 describe('grouped calendar composition', () => {
-  it('centers the supported twelve compositions within the existing safe bands', () => {
+  it('anchors every calendar range below the clock and positions events independently', () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
-      for (const timeRange of ['week', 'month', 'quarter'] as const) {
+      for (const timeRange of TIME_RANGES) {
         for (const presentation of ['calendar', 'hybrid'] as const) {
           const model = buildWallpaperModel({
             date,
@@ -31,20 +32,15 @@ describe('grouped calendar composition', () => {
 
           expect(composition.headerHeight).toBe(64);
           expect(composition.headerGap).toBe(8);
-          expect(composition.calendarHeight).toBe(required);
+          expect(composition.calendarHeight).toBeGreaterThanOrEqual(required);
           expect(composition.eventsHeight).toBe(204);
-          expect(composition.eventsTop - (composition.calendarTop + required)).toBe(
-            lockScreenProfile === 'large-clock' ? 48 : 64,
-          );
+          expect(composition.eventGap).toBe(24);
           expect(composition.calendarTop).toBe(composition.top + 72);
-          expect(composition.top).toBeGreaterThanOrEqual(band.top);
+          expect(composition.top).toBe(band.top);
           expect(composition.top + composition.height).toBeLessThanOrEqual(band.bottom);
-          expect(composition.top - band.top).toBeCloseTo(
-            band.bottom - (composition.top + composition.height),
-          );
           expect(bounds).toMatchObject({
             calendarTop: composition.calendarTop,
-            calendarBottom: composition.calendarTop + required,
+            calendarBottom: composition.calendarTop + composition.calendarHeight,
             eventsTop: composition.eventsTop,
             eventsBottom: composition.eventsTop + 204,
           });
@@ -64,18 +60,23 @@ describe('grouped calendar composition', () => {
     )!;
 
     expect(quarter).toMatchObject({
-      top: 1116,
-      height: 768,
-      calendarTop: 1188,
-      calendarHeight: 428,
+      top: 920,
+      height: 964,
+      calendarTop: 992,
+      calendarHeight: 664,
       eventsTop: 1680,
     });
     expect(month).toMatchObject({
-      top: 1140,
-      height: 920,
+      top: 1120,
+      height: 896,
       calendarHeight: 596,
-      eventsTop: 1856,
+      eventsTop: 1812,
     });
+    const model = buildWallpaperModel({ date, timeRange: 'quarter' });
+
+    expect(
+      getMonthCollectionLayout(model, quarter.calendarHeight).geometry.cellHeight,
+    ).toBe(72);
   });
 
   it('adds vertical breathing room only to the grouped month and quarter grids', () => {
@@ -92,13 +93,10 @@ describe('grouped calendar composition', () => {
     }
   });
 
-  it('does not opt unrelated ranges or presentations into the new composition', () => {
+  it('uses calendar composition only for calendar and hybrid presentations', () => {
     for (const timeRange of TIME_RANGES) {
       for (const presentation of PRESENTATIONS) {
-        if (
-          ['week', 'month', 'quarter'].includes(timeRange) &&
-          ['calendar', 'hybrid'].includes(presentation)
-        ) {
+        if (['calendar', 'hybrid'].includes(presentation)) {
           continue;
         }
 
@@ -109,8 +107,8 @@ describe('grouped calendar composition', () => {
     }
 
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
-      for (const timeRange of ['rolling14', 'year'] as const) {
-        for (const presentation of ['calendar', 'hybrid'] as const) {
+      for (const timeRange of TIME_RANGES) {
+        for (const presentation of ['calendar', 'hybrid', 'progress'] as const) {
           const model = buildWallpaperModel({
             date,
             timeRange,
@@ -119,13 +117,17 @@ describe('grouped calendar composition', () => {
           });
           const bounds = getWallpaperLayoutBounds(model);
           const layout = getWallpaperEventLayout(model);
-          const slotHeight =
-            presentation === 'calendar' && lockScreenProfile === 'standard' ? 250 : 216;
           const band = LOCK_SCREEN_CONTENT_BANDS[lockScreenProfile];
 
-          expect(layout.slotHeight).toBe(slotHeight);
-          expect(bounds.eventsTop).toBe(band.bottom - slotHeight - layout.lift);
-          expect(bounds.calendarBottom).toBe(bounds.eventsTop! - layout.sectionGap);
+          expect(
+            getCalendarRequiredHeight(model, presentation === 'hybrid'),
+          ).toBeLessThanOrEqual(bounds.calendarBottom! - bounds.calendarTop!);
+
+          if (presentation !== 'progress') {
+            expect(layout.slotHeight).toBe(204);
+            expect(bounds.eventsBottom).toBeLessThanOrEqual(band.bottom);
+            expect(bounds.eventsTop! - bounds.calendarBottom!).toBe(24);
+          }
         }
       }
     }
