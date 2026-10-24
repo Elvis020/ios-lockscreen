@@ -1,8 +1,9 @@
 # Native SF wallpaper prototype
 
-Status: experimental, opt-in code. It has local automated coverage, not a verified
-installation on the target iPhone. Deploy this version before trying its native URL.
-Keep the existing PNG Shortcut as a fallback.
+Status: experimental, opt-in code. Manual rendering and Lock Screen application
+have worked on the target iPhone. The latest spacing refinements have automated
+coverage and Mac previews; they still need a fresh iPhone check. Keep the existing
+PNG Shortcut as a fallback.
 
 ## What changes
 
@@ -15,6 +16,16 @@ The prototype supports week, month and quarter in Calendar or Hybrid presentatio
 with either clock profile and the saved built-in/custom theme. It keeps the dots,
 weekday labels, centered quarter summary, two visible events, `+N more`, and thin
 event timer lines. The current saved Telegram/dashboard settings remain authoritative.
+
+The supported layouts group the summary, calendar and events within the existing
+clock/notification clear zones. Quarter dots are 32px, quarter weekday labels are
+larger and brighter, and event countdowns use clearer text. Event lines stay 3px
+thin. Two event rows are shown at most, followed by `+N more` when needed; printed
+event dates and the redundant quarter heading stay hidden.
+
+These refinements change server-side drawing data only. The scene stays at version 1:
+existing Scriptable code and native Shortcut URLs do not need changing. After the
+deployment, rerun the same Shortcut to fetch the revised layout.
 
 Agenda, rolling 14 days, year, Countdown, Progress and Minimal are not supported in
 this prototype. The native URL returns a clear error for those settings; it does

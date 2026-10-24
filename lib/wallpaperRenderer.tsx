@@ -4,6 +4,7 @@ import type { WallpaperTheme } from './preferences';
 import {
   CONTENT_LEFT,
   CONTENT_RIGHT,
+  getCalendarComposition,
   getDayCardGeometry,
   getMonthCollectionGeometry,
   getMonthGeometry,
@@ -12,10 +13,12 @@ import {
   HEADER_HEIGHT,
   HEADER_TO_PRESENTATION_GAP,
   LOCK_SCREEN_CONTENT_BANDS,
+  isGroupedCalendarLayout,
   WALLPAPER_HEIGHT,
   WALLPAPER_WIDTH,
   WEEKDAY_LABELS,
   type MonthScale,
+  type CalendarComposition,
 } from './wallpaperLayout';
 import {
   formatPeriodRemaining,
@@ -63,6 +66,7 @@ export function WallpaperCanvas({
   const { theme } = model;
   const contentBand = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
   const contentHeight = contentBand.bottom - contentBand.top;
+  const composition = getCalendarComposition(model);
 
   return (
     <div
@@ -79,25 +83,34 @@ export function WallpaperCanvas({
       <div
         style={{
           position: 'absolute',
-          top: contentBand.top,
+          top: composition?.top ?? contentBand.top,
           left: CONTENT_LEFT,
           width: WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT,
-          height: contentHeight,
+          height: composition?.height ?? contentHeight,
           display: 'flex',
           flexDirection: 'column',
         }}
       >
-        <WallpaperHeader model={model} title={options.title} />
-        <div
-          style={{
-            display: 'flex',
-            flex: 1,
-            minHeight: 0,
-            marginTop: HEADER_TO_PRESENTATION_GAP,
-          }}
-        >
-          <Presentation model={model} />
-        </div>
+        <WallpaperHeader
+          model={model}
+          title={options.title}
+          height={composition?.headerHeight}
+          grouped={Boolean(composition)}
+        />
+        {composition ? (
+          <GroupedCalendar model={model} composition={composition} />
+        ) : (
+          <div
+            style={{
+              display: 'flex',
+              flex: 1,
+              minHeight: 0,
+              marginTop: HEADER_TO_PRESENTATION_GAP,
+            }}
+          >
+            <Presentation model={model} />
+          </div>
+        )}
       </div>
       {options.mockIosOverlay ? <MockIosOverlay model={model} /> : null}
     </div>
@@ -107,16 +120,21 @@ export function WallpaperCanvas({
 function WallpaperHeader({
   model,
   title,
+  height = HEADER_HEIGHT,
+  grouped = false,
 }: {
   model: WallpaperModel;
   title?: string;
+  height?: number;
+  grouped?: boolean;
 }): ReactElement {
   const copy = getWallpaperHeaderCopy(model, title);
 
   return (
     <div
       style={{
-        height: HEADER_HEIGHT,
+        height,
+        flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'center',
@@ -146,13 +164,45 @@ function WallpaperHeader({
             justifyContent: 'center',
             textAlign: 'center',
             color: model.theme.subtext,
-            fontSize: 26,
-            lineHeight: 1.25,
+            fontSize: grouped ? 30 : 26,
+            lineHeight: grouped ? 1.2 : 1.25,
           }}
         >
           {copy.subtitle}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function GroupedCalendar({
+  model,
+  composition,
+}: {
+  model: WallpaperModel;
+  composition: CalendarComposition;
+}): ReactElement {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        marginTop: composition.headerGap,
+      }}
+    >
+      <div style={{ display: 'flex', height: composition.calendarHeight, flexShrink: 0 }}>
+        <CalendarVisual model={model} compact={model.presentation === 'hybrid'} />
+      </div>
+      <div
+        style={{
+          display: 'flex',
+          height: composition.eventsHeight,
+          marginTop: composition.eventGap,
+          flexShrink: 0,
+        }}
+      >
+        <EventList model={model} />
+      </div>
     </div>
   );
 }
@@ -382,7 +432,13 @@ function DayRows({
           }}
         >
           {row.map((cell) => (
-            <DayCard key={cell.date} cell={cell} theme={model.theme} compact={compact} />
+            <DayCard
+              key={cell.date}
+              cell={cell}
+              theme={model.theme}
+              compact={compact}
+              readable={isGroupedCalendarLayout(model)}
+            />
           ))}
         </div>
       ))}
@@ -394,10 +450,12 @@ function DayCard({
   cell,
   theme,
   compact,
+  readable,
 }: {
   cell: WallpaperCell;
   theme: WallpaperTheme;
   compact: boolean;
+  readable: boolean;
 }): ReactElement {
   const geometry = getDayCardGeometry(compact);
 
@@ -415,8 +473,9 @@ function DayCard({
       <div
         style={{
           display: 'flex',
-          color: theme.subtext,
+          color: readable ? theme.text : theme.subtext,
           fontSize: geometry.labelSize,
+          lineHeight: readable ? 1.2 : undefined,
           fontWeight: 650,
           textTransform: 'uppercase',
         }}
@@ -474,6 +533,7 @@ function MonthCollection({
           width={width}
           scale={scale}
           showLabel={groupCount > 1}
+          readable={isGroupedCalendarLayout(model)}
         />
       ))}
     </div>
@@ -486,12 +546,14 @@ function MonthGroup({
   width,
   scale,
   showLabel,
+  readable,
 }: {
   group: WallpaperMonthGroup;
   theme: WallpaperTheme;
   width: string;
   scale: MonthScale;
   showLabel: boolean;
+  readable: boolean;
 }): ReactElement {
   const rows = chunk(group.cells, 7);
   const geometry = getMonthGeometry(scale);
@@ -512,6 +574,7 @@ function MonthGroup({
             marginBottom: geometry.labelGap,
             color: theme.text,
             fontSize: geometry.labelSize,
+            lineHeight: readable ? 1.2 : undefined,
             fontWeight: 650,
           }}
         >
@@ -527,8 +590,9 @@ function MonthGroup({
                 width: '14.285%',
                 display: 'flex',
                 justifyContent: 'center',
-                color: theme.subtext,
+                color: readable ? theme.text : theme.subtext,
                 fontSize: geometry.weekdaySize,
+                lineHeight: readable ? 1.2 : undefined,
                 fontWeight: 650,
               }}
             >
@@ -661,6 +725,7 @@ function EventList({ model }: { model: WallpaperModel }): ReactElement {
             theme={model.theme}
             compact={layout.compact}
             height={layout.rowHeight}
+            emphasizeCountdown={isGroupedCalendarLayout(model)}
           />
         ))}
       </div>
@@ -686,11 +751,13 @@ function EventRow({
   theme,
   compact,
   height,
+  emphasizeCountdown = false,
 }: {
   event: DisplayEvent;
   theme: WallpaperTheme;
   compact: boolean;
   height: number;
+  emphasizeCountdown?: boolean;
 }): ReactElement {
   return (
     <div
@@ -729,8 +796,13 @@ function EventRow({
           style={{
             display: 'flex',
             flexShrink: 0,
-            color: event.daysLeft <= 1 ? theme.current : theme.subtext,
-            fontSize: compact ? 28 : 32,
+            color:
+              event.daysLeft <= 1
+                ? theme.current
+                : emphasizeCountdown
+                  ? theme.text
+                  : theme.subtext,
+            fontSize: compact ? (emphasizeCountdown ? 30 : 28) : 32,
             lineHeight: 1.2,
             fontWeight: 500,
           }}

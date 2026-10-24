@@ -5,6 +5,9 @@ import {
 } from '../lib/nativeWallpaperScene';
 import { LOCK_SCREEN_PROFILES, PRESENTATIONS, TIME_RANGES } from '../lib/preferences';
 import {
+  CALENDAR_DOT_GEOMETRY,
+  getCalendarComposition,
+  getMonthGeometry,
   getWallpaperLayoutBounds,
   WALLPAPER_HEIGHT,
   WALLPAPER_WIDTH,
@@ -80,12 +83,60 @@ describe('native wallpaper scene', () => {
     const model = buildWallpaperModel({ date, timeRange: 'quarter', publicEvents });
     const scene = buildNativeWallpaperScene(model);
     const circles = scene.commands.filter((command) => command.kind === 'circle');
-    const dots = circles.filter(({ diameter }) => diameter === 28);
+    const dots = circles.filter(({ diameter }) => diameter === 32);
 
+    expect(CALENDAR_DOT_GEOMETRY.quarter.size).toBe(32);
     expect(dots).toHaveLength(92);
     expect(dots.filter(({ fill }) => fill === model.theme.current)).toHaveLength(1);
+    expect(circles.filter(({ diameter }) => diameter === 42)).toHaveLength(3);
     expect(circles.filter(({ diameter }) => diameter === 38)).toHaveLength(3);
-    expect(circles.filter(({ diameter }) => diameter === 34)).toHaveLength(3);
+  });
+
+  it('groups the summary and calendar, lifts the event block, and clarifies small labels', () => {
+    const model = buildWallpaperModel({ date, timeRange: 'quarter', publicEvents });
+    const scene = buildNativeWallpaperScene(model);
+    const composition = getCalendarComposition(model)!;
+    const text = scene.commands.filter((command) => command.kind === 'text');
+    const summary = text.find(({ value }) => value === '26% complete · 68 days left')!;
+    const october = text.find(({ value }) => value === 'October')!;
+    const weekdays = text.filter(({ value }) =>
+      ['S', 'M', 'T', 'W', 'F'].includes(value),
+    );
+    const countdown = text.find(({ value }) => value === '21d')!;
+
+    expect(october.y - (summary.y + summary.height)).toBeLessThan(40);
+    expect(composition.eventsTop).toBeLessThan(1798);
+    expect(summary).toMatchObject({ size: 30, align: 'center' });
+    expect(
+      weekdays.every(({ size, color }) => size === 22 && color === model.theme.text),
+    ).toBe(true);
+    expect(countdown).toMatchObject({
+      size: 30,
+      color: model.theme.text,
+      align: 'right',
+    });
+    expect(getMonthGeometry('medium').cellHeight).toBe(44);
+  });
+
+  it('keeps event markers separated even on adjacent event days', () => {
+    const model = buildWallpaperModel({
+      date,
+      publicEvents: [
+        { name: 'First event', date: '2026-11-12' },
+        { name: 'Second event', date: '2026-11-13' },
+      ],
+    });
+    const { size, eventRingGap, eventRingWidth } = CALENDAR_DOT_GEOMETRY.quarter;
+    const outerDiameter = size + 2 * (eventRingGap + eventRingWidth);
+    const scene = buildNativeWallpaperScene(model);
+    const rings = scene.commands.filter(
+      (command) => command.kind === 'circle' && command.diameter === outerDiameter,
+    );
+
+    expect(outerDiameter).toBeLessThan(getMonthGeometry('medium').cellHeight);
+    expect(rings).toHaveLength(2);
+    expect(rings[0].y).toBe(rings[1].y);
+    expect(Math.abs(rings[1].x - rings[0].x)).toBeGreaterThan(outerDiameter);
   });
 
   it('keeps full month names, weekdays and the centered quarter summary without dates', () => {

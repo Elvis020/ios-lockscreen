@@ -17,7 +17,7 @@ export const CALENDAR_DOT_GEOMETRY = {
   shape: 'circle',
   week: { size: 100, compactSize: 92, eventRingGap: 5, eventRingWidth: 3 },
   month: { size: 68, eventRingGap: 4, eventRingWidth: 3 },
-  quarter: { size: 28, eventRingGap: 3, eventRingWidth: 2 },
+  quarter: { size: 32, eventRingGap: 3, eventRingWidth: 2 },
   year: { size: 16, eventRingGap: 2, eventRingWidth: 2 },
 } as const;
 
@@ -43,14 +43,34 @@ export interface WallpaperEventLayout {
   lift: number;
 }
 
+export interface CalendarComposition {
+  top: number;
+  height: number;
+  headerHeight: number;
+  headerGap: number;
+  calendarTop: number;
+  calendarHeight: number;
+  eventGap: number;
+  eventsTop: number;
+  eventsHeight: number;
+}
+
 export type MonthScale = 'large' | 'large-compact' | 'medium' | 'dots' | 'dots-compact';
+
+export function isGroupedCalendarLayout(model: WallpaperModel): boolean {
+  return (
+    ['week', 'month', 'quarter'].includes(model.timeRange) &&
+    ['calendar', 'hybrid'].includes(model.presentation)
+  );
+}
 
 export function getWallpaperEventLayout(model: WallpaperModel): WallpaperEventLayout {
   const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
   const largeClock = model.lockScreenProfile === 'large-clock';
   const compact = model.presentation === 'calendar' || model.presentation === 'hybrid';
-  const slotHeight =
-    model.presentation === 'calendar'
+  const slotHeight = isGroupedCalendarLayout(model)
+    ? 204
+    : model.presentation === 'calendar'
       ? largeClock
         ? 216
         : 250
@@ -87,6 +107,7 @@ export function getWallpaperEventLayout(model: WallpaperModel): WallpaperEventLa
 
 export function getWallpaperLayoutBounds(model: WallpaperModel): WallpaperLayoutBounds {
   const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
+  const composition = getCalendarComposition(model);
   const presentationTop = band.top + HEADER_HEIGHT + HEADER_TO_PRESENTATION_GAP;
   const bounds: WallpaperLayoutBounds = {
     contentTop: band.top,
@@ -94,6 +115,16 @@ export function getWallpaperLayoutBounds(model: WallpaperModel): WallpaperLayout
     presentationTop,
     presentationBottom: band.bottom,
   };
+
+  if (composition) {
+    return {
+      ...bounds,
+      calendarTop: composition.calendarTop,
+      calendarBottom: composition.calendarTop + composition.calendarHeight,
+      eventsTop: composition.eventsTop,
+      eventsBottom: composition.eventsTop + composition.eventsHeight,
+    };
+  }
 
   if (model.presentation === 'calendar' || model.presentation === 'hybrid') {
     const layout = getWallpaperEventLayout(model);
@@ -122,6 +153,12 @@ export function getCalendarRequiredHeight(
   model: WallpaperModel,
   compact = false,
 ): number {
+  if (isGroupedCalendarLayout(model) && model.timeRange !== 'week') {
+    const { scale } = getMonthCollectionGeometry(model);
+
+    return Math.ceil(getMonthGroupHeight(scale, model.monthGroups.length > 1));
+  }
+
   if (model.timeRange === 'week' || model.timeRange === 'rolling14') {
     const rows = Math.ceil(model.cells.length / 7);
     const { height, gap } = getDayCardGeometry(compact);
@@ -140,6 +177,39 @@ export function getCalendarRequiredHeight(
   const gap = scale === 'dots-compact' ? 10 : compact ? 10 : 14;
 
   return rows * groupHeight + Math.max(0, rows - 1) * gap;
+}
+
+export function getCalendarComposition(
+  model: WallpaperModel,
+): CalendarComposition | null {
+  if (!isGroupedCalendarLayout(model)) {
+    return null;
+  }
+
+  const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
+  const headerHeight = 64;
+  const headerGap = 8;
+  const calendarHeight = getCalendarRequiredHeight(
+    model,
+    model.presentation === 'hybrid',
+  );
+  const eventGap = model.lockScreenProfile === 'large-clock' ? 48 : 64;
+  const eventsHeight = getWallpaperEventLayout(model).slotHeight;
+  const height = headerHeight + headerGap + calendarHeight + eventGap + eventsHeight;
+  const top = band.top + (band.bottom - band.top - height) / 2;
+  const calendarTop = top + headerHeight + headerGap;
+
+  return {
+    top,
+    height,
+    headerHeight,
+    headerGap,
+    calendarTop,
+    calendarHeight,
+    eventGap,
+    eventsTop: calendarTop + calendarHeight + eventGap,
+    eventsHeight,
+  };
 }
 
 export function getWallpaperHeaderCopy(
@@ -220,12 +290,20 @@ export function getMonthGeometry(scale: MonthScale) {
 
   return {
     dot,
-    cellHeight: large ? 88 : largeCompact ? 78 : dotsCompact ? 22 : dots ? 24 : 40,
+    cellHeight: large ? 88 : largeCompact ? 78 : dotsCompact ? 22 : dots ? 24 : 44,
     paddingY: large ? 22 : largeCompact ? 10 : dotsCompact ? 6 : dots ? 12 : 16,
     paddingX: large ? 20 : largeCompact ? 16 : dotsCompact ? 8 : dots ? 10 : 12,
     labelGap: large ? 16 : largeCompact ? 8 : dotsCompact ? 4 : dots ? 8 : 12,
     labelSize: large ? 34 : largeCompact ? 32 : dots ? 28 : 32,
-    weekdaySize: large ? 25 : largeCompact ? 24 : 14,
+    weekdaySize: large ? 25 : largeCompact ? 24 : 22,
     showWeekdays: !dots,
   };
+}
+
+export function getMonthGroupHeight(scale: MonthScale, showLabel: boolean): number {
+  const geometry = getMonthGeometry(scale);
+  const labelHeight = showLabel ? geometry.labelSize * 1.2 + geometry.labelGap : 0;
+  const weekdayHeight = geometry.showWeekdays ? geometry.weekdaySize * 1.2 + 7 : 0;
+
+  return geometry.paddingY * 2 + labelHeight + weekdayHeight + 6 * geometry.cellHeight;
 }

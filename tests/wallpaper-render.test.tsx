@@ -121,8 +121,33 @@ describe('wallpaper renderer', () => {
       expect(geometry.eventRingWidth).toBeGreaterThanOrEqual(2);
     }
 
-    expect(CALENDAR_DOT_GEOMETRY.quarter.size).toBeGreaterThanOrEqual(26);
+    expect(CALENDAR_DOT_GEOMETRY.quarter.size).toBe(32);
     expect(CALENDAR_DOT_GEOMETRY.year.size).toBeGreaterThanOrEqual(14);
+  });
+
+  it('uses the grouped spacing and clearer small text while preserving thin event tracks', () => {
+    const model = buildWallpaperModel({
+      date,
+      timeRange: 'quarter',
+      publicEvents: [
+        { name: 'Launch', date: '2026-11-14' },
+        { name: 'Offsite', date: '2026-12-19' },
+      ],
+    });
+    const { text, styles } = inspectCanvas(WallpaperCanvas({ model }));
+
+    expect(styles.some(({ marginTop }) => marginTop === 8)).toBe(true);
+    expect(styles.some(({ marginTop }) => marginTop === 64)).toBe(true);
+    expect(
+      styles.some(({ fontSize, color }) => fontSize === 22 && color === model.theme.text),
+    ).toBe(true);
+    expect(
+      styles.some(({ fontSize, color }) => fontSize === 30 && color === model.theme.text),
+    ).toBe(true);
+    expect(
+      styles.filter(({ height, overflow }) => height === 3 && overflow === 'hidden'),
+    ).toHaveLength(2);
+    expect(text).not.toContain('Q4 2026');
   });
 
   it('uses minimal header copy and removes the quarter heading', () => {
