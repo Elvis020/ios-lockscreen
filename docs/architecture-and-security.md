@@ -9,7 +9,7 @@ Calendar Lockscreen runs as Vercel Edge functions and uses Redis as the shared s
 3. The renderer creates the selected time range and presentation inside a calibrated lock-screen content band.
 4. An iOS Shortcut fetches the image and applies it to the phone.
 
-The application cannot force iOS to refresh a wallpaper. Run the Shortcut manually or with an iOS automation after changing settings. The agreed, deferred [iOS refresh setup](./ios-shortcut.md) uses Telegram's app-close trigger on the phone; it is not a server-push feature.
+The application cannot force iOS to refresh a wallpaper. Run the Shortcut manually or with an iOS automation after changing settings; this is not a server-push feature.
 
 ## Tokens and URLs
 

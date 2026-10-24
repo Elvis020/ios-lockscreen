@@ -128,19 +128,10 @@ export const BUILT_IN_THEMES: Record<string, WallpaperTheme> = {
     text: '#E7F5E7',
     subtext: '#94AE94',
   },
-  minimal: {
-    id: 'minimal',
-    background: '#1C1C1C',
-    passed: '#E0E0E0',
-    weekend: '#BDBDBD',
-    current: '#FF6B35',
-    future: '#505050',
-    text: '#E5E5E5',
-    subtext: '#A1A1A1',
-  },
 };
 
 export const MAX_CUSTOM_THEMES = 5;
+export const RETIRED_THEME_IDS = ['minimal'] as const;
 
 export function isEventCount(value: unknown): value is number {
   return (
@@ -201,6 +192,17 @@ export function resolveTheme(
   );
 }
 
+export function isReservedThemeId(themeId: string): boolean {
+  return Boolean(BUILT_IN_THEMES[themeId]) || isRetiredThemeId(themeId);
+}
+
+export function isRetiredThemeId(themeId: string): boolean {
+  return RETIRED_THEME_IDS.includes(themeId as 'minimal');
+}
+
 export function listAvailableThemeIds(customThemes: WallpaperTheme[] = []): string[] {
-  return [...Object.keys(BUILT_IN_THEMES), ...customThemes.map(({ id }) => id)];
+  return [
+    ...Object.keys(BUILT_IN_THEMES),
+    ...customThemes.filter(({ id }) => !isReservedThemeId(id)).map(({ id }) => id),
+  ];
 }

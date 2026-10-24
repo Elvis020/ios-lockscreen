@@ -45,7 +45,6 @@ The public wallpaper works without Redis. Personalized wallpapers and account fe
 
 - [Telegram bot setup and commands](./docs/telegram.md)
 - [Google Calendar setup](./docs/google-calendar.md)
-- [iOS Shortcut and automatic refresh plan](./docs/ios-shortcut.md)
 - [Native iPhone SF rendering prototype](./docs/native-ios-rendering.md)
 - [Architecture and security notes](./docs/architecture-and-security.md)
 - [Original project brief](./project_brief.md)

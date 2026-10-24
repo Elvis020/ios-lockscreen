@@ -32,7 +32,7 @@ describe('settings API', () => {
     expect(body.wallpaperOptions.presets).toHaveLength(7);
     expect(body.wallpaperOptions.presentations).not.toContain('agenda');
     expect(body.wallpaperOptions.presentations).not.toContain('minimal');
-    expect(body.themes).toContain('minimal');
+    expect(body.themes).not.toContain('minimal');
     expect(body.wallpaperOptions.eventCounts).toEqual([1, 2, 3, 4, 5]);
   });
 
@@ -147,6 +147,22 @@ describe('settings API', () => {
       }
     },
   );
+
+  it('normalizes a saved retired theme and rejects selecting it again', async () => {
+    await seedLegacyUser();
+    const raw = await redis.get<Record<string, unknown>>('user:owner');
+
+    await redis.set('user:owner', { ...raw, theme: 'minimal' });
+    const { default: handler } = await import('../api/settings');
+    const { getUser } = await import('../lib/tokenManager');
+
+    const settings = await handler(request('GET'));
+    const update = await handler(request('PATCH', { theme: 'minimal' }));
+
+    expect((await settings.json()).theme).toBe('default');
+    expect(update.status).toBe(400);
+    expect((await getUser('owner'))?.theme).toBe('default');
+  });
 });
 
 async function seedLegacyUser(): Promise<void> {

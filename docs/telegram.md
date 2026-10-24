@@ -85,9 +85,17 @@ edits the same preference. Remaining events appear as `+N more`; all tracked eve
 still mark the calendar. Changes appear on the next wallpaper refresh.
 
 Agenda and Minimal views have been removed. Saved accounts using either fall back
-to Calendar without losing events or their wallpaper URL. The Minimal color theme
-is still available. Year uses a continuous twenty-two-column dot field with event timers;
-older saved Year/progress settings render the same way.
+to Calendar without losing events or their wallpaper URL. The retired `minimal`
+color theme also falls back to `default` and cannot be recreated as a custom theme.
+
+`/theme` and `/theme list` send a compact visual contact sheet of up to nine available
+themes, followed by a two-column set of one-tap buttons. The preview is a static PNG:
+it shows only each theme's palette and sample calendar marks, not account, calendar,
+credential, or wallpaper-key data. If Telegram cannot deliver the PNG, the bot sends
+the same selector as text and buttons. No animated snow or rain is included.
+
+Year uses a continuous twenty-two-column dot field with event timers; older saved
+Year/progress settings render the same way.
 
 Run `npm run telegram:configure-commands` again after deploying this update to add
 `/eventcount` to Telegram's autocomplete menu. This does not alter the webhook.

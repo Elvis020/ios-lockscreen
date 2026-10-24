@@ -1,16 +1,18 @@
 import { syncGoogleEvents } from './calendar/service';
 import {
-  BUILT_IN_THEMES,
   isEventCount,
   isLockScreenProfile,
   isPresentation,
   isTimeRange,
   isWallpaperPreset,
+  isReservedThemeId,
   listAvailableThemeIds,
+  resolveTheme,
   PRESENTATIONS,
   WALLPAPER_PRESET_IDS,
   WALLPAPER_PRESETS,
 } from './preferences';
+import { createThemePreviewImageResponse } from './themePreviewRenderer';
 import { getRedis } from './redis';
 import { deleteRedisKeyIfValue } from './redisLock';
 import {
@@ -40,6 +42,12 @@ export interface TelegramUpdate {
     chat?: { id?: number; type?: string };
     from?: { id?: number; username?: string };
   };
+  callback_query?: {
+    id?: string;
+    data?: string;
+    from?: { id?: number; username?: string };
+    message?: { message_id?: number; chat?: { id?: number; type?: string } };
+  };
 }
 
 export interface TelegramProcessingResult {
@@ -47,7 +55,7 @@ export interface TelegramProcessingResult {
 }
 
 export interface TelegramInlineKeyboardMarkup {
-  inline_keyboard: Array<Array<{ text: string; url: string }>>;
+  inline_keyboard: Array<Array<{ text: string; url?: string; callback_data?: string }>>;
 }
 
 export interface TelegramReply {
@@ -63,6 +71,7 @@ export interface TelegramMessageOptions {
 
 interface LinkedCommandResult extends TelegramProcessingResult {
   reply: TelegramReply;
+  themeSelector?: { themes: import('./preferences').WallpaperTheme[] };
 }
 
 export async function processTelegramUpdate(
@@ -70,6 +79,10 @@ export async function processTelegramUpdate(
   origin: string,
   completion?: MutationCompletion,
 ): Promise<TelegramProcessingResult> {
+  if (update.callback_query) {
+    return processThemeCallback(update.callback_query, completion);
+  }
+
   const chatIdValue = update.message?.chat?.id;
   const userIdValue = update.message?.from?.id;
   const text = update.message?.text?.trim();
@@ -135,7 +148,11 @@ export async function processTelegramUpdate(
       completion,
     );
 
-    await sendTelegramReply(chatId, result.reply);
+    if (result.themeSelector) {
+      await sendTelegramThemeSelector(chatId, result.reply, result.themeSelector);
+    } else {
+      await sendTelegramReply(chatId, result.reply);
+    }
 
     return { completionCommitted: result.completionCommitted };
   } catch (error) {
@@ -149,6 +166,92 @@ export async function processTelegramUpdate(
     }
 
     throw error;
+  }
+}
+
+async function processThemeCallback(
+  callback: NonNullable<TelegramUpdate['callback_query']>,
+  completion?: MutationCompletion,
+): Promise<TelegramProcessingResult> {
+  const chatId = callback.message?.chat?.id;
+  const userId = callback.from?.id;
+  const callbackId = callback.id;
+  const themeId = callback.data?.startsWith('theme:')
+    ? callback.data.slice('theme:'.length)
+    : undefined;
+
+  let acknowledgement = 'This selection is not available.';
+
+  try {
+    if (
+      callback.message?.chat?.type !== 'private' ||
+      chatId === undefined ||
+      userId === undefined ||
+      !themeId
+    ) {
+      return { completionCommitted: false };
+    }
+
+    const chat = String(chatId);
+    const telegramUserId = String(userId);
+    const redis = getRedis();
+    const token = await redis.get<string>(`telegram:user:${telegramUserId}`);
+
+    if (!token) {
+      acknowledgement = 'Link Telegram in the dashboard first.';
+
+      return { completionCommitted: false };
+    }
+
+    const user = await getUser(token);
+
+    if (
+      !user ||
+      user.telegram?.userId !== telegramUserId ||
+      user.telegram.chatId !== chat ||
+      !listAvailableThemeIds(user.customThemes).includes(themeId)
+    ) {
+      return { completionCommitted: false };
+    }
+
+    if (themeId === user.theme) {
+      acknowledgement = `Already using ${themeId}.`;
+
+      return { completionCommitted: false };
+    }
+
+    const updatedUser = await updatePreferences(token, { theme: themeId }, completion);
+
+    if (!updatedUser) {
+      throw new Error('Linked account no longer exists');
+    }
+
+    if (typeof callback.message?.message_id === 'number') {
+      const selector = createThemeSelector(updatedUser);
+
+      try {
+        await editTelegramThemeSelector(
+          chat,
+          callback.message.message_id,
+          selector.reply,
+        );
+      } catch (error) {
+        console.error('Telegram theme selector edit failed:', error);
+        await sendTelegramReply(chat, selector.reply);
+      }
+    }
+
+    acknowledgement = `Theme set to ${themeId}.`;
+
+    return { completionCommitted: Boolean(completion) };
+  } catch (error) {
+    acknowledgement = 'Could not update the theme. Please try again.';
+
+    throw error;
+  } finally {
+    if (callbackId) {
+      await answerTelegramCallback(callbackId, acknowledgement);
+    }
   }
 }
 
@@ -197,6 +300,83 @@ async function sendTelegramReply(chatId: string, reply: TelegramReply): Promise<
   } catch (error) {
     console.error('Telegram reply delivery failed:', error);
   }
+}
+
+async function sendTelegramThemeSelector(
+  chatId: string,
+  reply: TelegramReply,
+  selector: NonNullable<LinkedCommandResult['themeSelector']>,
+): Promise<void> {
+  try {
+    const image = createThemePreviewImageResponse(selector.themes);
+    const form = new FormData();
+
+    form.set('chat_id', chatId);
+    form.set('photo', await image.blob(), 'theme-selector.png');
+    form.set('caption', reply.text);
+    form.set('parse_mode', reply.parseMode ?? 'HTML');
+    form.set('reply_markup', JSON.stringify(reply.replyMarkup));
+
+    const response = await telegramFetch('sendPhoto', { method: 'POST', body: form });
+
+    if (!response.ok) {
+      throw new Error('Telegram photo delivery failed');
+    }
+  } catch (error) {
+    console.error('Telegram theme preview delivery failed:', error);
+    await sendTelegramReply(chatId, reply);
+  }
+}
+
+async function answerTelegramCallback(
+  callbackQueryId: string,
+  text: string,
+): Promise<void> {
+  try {
+    const response = await telegramFetch('answerCallbackQuery', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackQueryId, text }),
+    });
+
+    if (!response.ok) {
+      throw new Error('Telegram callback acknowledgement failed');
+    }
+  } catch (error) {
+    console.error('Telegram callback acknowledgement failed:', error);
+  }
+}
+
+async function editTelegramThemeSelector(
+  chatId: string,
+  messageId: number,
+  reply: TelegramReply,
+): Promise<void> {
+  const response = await telegramFetch('editMessageCaption', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      caption: reply.text,
+      parse_mode: reply.parseMode,
+      reply_markup: reply.replyMarkup,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Telegram theme selector update failed');
+  }
+}
+
+async function telegramFetch(path: string, init: RequestInit): Promise<Response> {
+  const botToken = process.env.TELEGRAM_BOT_TOKEN;
+
+  if (!botToken) {
+    throw new Error('Telegram bot is not configured');
+  }
+
+  return fetch(`https://api.telegram.org/bot${botToken}/${path}`, init);
 }
 
 async function linkChat(
@@ -607,18 +787,7 @@ async function runThemeCommand(
 
   if (!args.length || args[0] === 'list') {
     return {
-      reply: htmlReply(
-        [
-          '<b>Themes</b>',
-          '',
-          `Current: <b>${escapeTelegramHtml(user.theme)}</b>`,
-          `Available: ${listAvailableThemeIds(user.customThemes)
-            .map(escapeTelegramHtml)
-            .join(' · ')}`,
-          '',
-          'Select with <code>/theme NAME</code>.',
-        ].join('\n'),
-      ),
+      ...createThemeSelector(user),
       completionCommitted: false,
     };
   }
@@ -636,12 +805,12 @@ async function runThemeCommand(
       };
     }
 
-    if (BUILT_IN_THEMES[theme.id]) {
+    if (isReservedThemeId(theme.id)) {
       return {
         reply: htmlReply(
           [
             '<b>Name reserved</b>',
-            'Choose a name that is not used by a built-in theme.',
+            'Choose a name that is not reserved by a built-in or retired theme.',
           ].join('\n'),
         ),
         completionCommitted: false,
@@ -727,6 +896,57 @@ async function runThemeCommand(
   };
 }
 
+function availableThemes(
+  customThemes: import('./preferences').WallpaperTheme[],
+): string[] {
+  return listAvailableThemeIds(customThemes).slice(0, 9);
+}
+
+function createThemeSelector(
+  user: Pick<import('./userSchema').UserData, 'theme' | 'customThemes'>,
+): Pick<LinkedCommandResult, 'reply' | 'themeSelector'> {
+  const themes = availableThemes(user.customThemes);
+
+  return {
+    reply: htmlReply(
+      [
+        '<b>Choose a theme</b>',
+        '',
+        `Current: <b>${escapeTelegramHtml(user.theme)}</b>`,
+        `Available: ${themes.map(escapeTelegramHtml).join(' · ')}`,
+        '',
+        'Tap a button below, or use <code>/theme NAME</code>.',
+      ].join('\n'),
+      themeKeyboard(themes, user.theme),
+    ),
+    themeSelector: {
+      themes: themes.map((id) => resolveTheme(id, user.customThemes)),
+    },
+  };
+}
+
+function themeKeyboard(
+  themeIds: string[],
+  currentThemeId: string,
+): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: themeIds.reduce<
+      Array<Array<{ text: string; callback_data: string }>>
+    >((rows, themeId, index) => {
+      if (index % 2 === 0) {
+        rows.push([]);
+      }
+
+      rows.at(-1)?.push({
+        text: themeId === currentThemeId ? `✓ ${themeId}` : themeId,
+        callback_data: `theme:${themeId}`,
+      });
+
+      return rows;
+    }, []),
+  };
+}
+
 function helpText(): string {
   return [
     '<b>Calendar Lockscreen</b>',
@@ -757,8 +977,11 @@ function helpText(): string {
   ].join('\n');
 }
 
-function htmlReply(text: string): TelegramReply {
-  return { text, parseMode: 'HTML' };
+function htmlReply(
+  text: string,
+  replyMarkup?: TelegramInlineKeyboardMarkup,
+): TelegramReply {
+  return { text, parseMode: 'HTML', replyMarkup };
 }
 
 function usageReply(title: string, command: string): TelegramReply {

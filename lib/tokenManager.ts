@@ -2,6 +2,7 @@ import {
   MAX_CUSTOM_THEMES,
   DEFAULT_EVENT_COUNT,
   isEventCount,
+  isReservedThemeId,
   listAvailableThemeIds,
   type WallpaperTheme,
 } from './preferences';
@@ -271,7 +272,7 @@ export async function addCustomTheme(
   return mutateUser(
     token,
     (user) => {
-      if (listAvailableThemeIds().includes(theme.id)) {
+      if (isReservedThemeId(theme.id)) {
         throw new Error('Built-in theme names are reserved');
       }
 

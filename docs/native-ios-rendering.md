@@ -100,8 +100,7 @@ non-cacheable 422 `native_scene_too_large` error rather than silently dropping m
    from your working Shortcut. Select **Lock Screen only** and disable its preview
    confirmation where available.
 
-Do not connect the Telegram-close automation to this test Shortcut until manual
-refreshes are reliable. Locked-phone and background execution are separate tests.
+Verify manual refreshes first. Locked-phone and background execution are separate tests.
 If Scriptable is terminated for memory or fails inside the extension, try its
 **Run in App** option; that may open Scriptable and is not a silent-refresh guarantee.
 
@@ -137,7 +136,6 @@ Change a view/theme/event in Telegram, wait for the successful reply, then run t
 test Shortcut. Confirm the next fetch reflects the saved change. This does not add
 a Telegram Send trigger, refresh Google automatically, or force a wallpaper refresh.
 
-After manual application works, test the [Telegram-close automation](./ios-shortcut.md).
 Do not call the prototype production-ready until crop/zoom, permissions, payload
 size, memory and locked/background execution have been checked on the target phone.
 

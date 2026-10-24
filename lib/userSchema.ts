@@ -4,6 +4,8 @@ import {
   isEventCount,
   isLockScreenProfile,
   isPresentation,
+  isRetiredThemeId,
+  isReservedThemeId,
   isTimeRange,
   isViewMode,
   type LockScreenProfile,
@@ -122,7 +124,10 @@ function normalizeTheme(value: unknown, customThemes: WallpaperTheme[]): string 
     return 'default';
   }
 
-  if (BUILT_IN_THEMES[value] || customThemes.some(({ id }) => id === value)) {
+  if (
+    !isRetiredThemeId(value) &&
+    (BUILT_IN_THEMES[value] || customThemes.some(({ id }) => id === value))
+  ) {
     return value;
   }
 
@@ -248,6 +253,7 @@ function normalizeCustomThemes(value: unknown): WallpaperTheme[] {
 
       return (
         typeof candidate.id === 'string' &&
+        !isReservedThemeId(candidate.id) &&
         typeof candidate.background === 'string' &&
         typeof candidate.passed === 'string' &&
         typeof candidate.weekend === 'string' &&

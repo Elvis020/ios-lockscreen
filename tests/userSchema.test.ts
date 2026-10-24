@@ -31,7 +31,7 @@ describe('normalizeUserData', () => {
         wallpaperKey: 'read-only',
         timeRange: 'year',
         presentation: 'calendar',
-        theme: 'minimal',
+        theme: 'default',
         selectedEventIds: ['google-one'],
       });
       expect(user?.events[0].name).toBe('Launch');

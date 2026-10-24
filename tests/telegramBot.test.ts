@@ -95,6 +95,192 @@ describe('Telegram commands', () => {
     });
   });
 
+  it('sends a visual theme contact sheet with a two-column selection keyboard', async () => {
+    await seedLinkedUser({ theme: 'ocean' });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/theme list'), 'https://example.com');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const form = init.body as FormData;
+
+    expect(url).toContain('/sendPhoto');
+    expect(form.get('caption')).toContain('Current: <b>ocean</b>');
+    expect(form.get('caption')).not.toContain('wallpaper-key');
+    expect(form.get('photo')).toBeInstanceOf(Blob);
+    expect(JSON.parse(String(form.get('reply_markup')))).toEqual({
+      inline_keyboard: [
+        [
+          { text: 'default', callback_data: 'theme:default' },
+          { text: '✓ ocean', callback_data: 'theme:ocean' },
+        ],
+        [
+          { text: 'sunset', callback_data: 'theme:sunset' },
+          { text: 'forest', callback_data: 'theme:forest' },
+        ],
+      ],
+    });
+  });
+
+  it('falls back to the text selector when the preview photo cannot be delivered', async () => {
+    await seedLinkedUser();
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 500 }));
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/theme'), 'https://example.com');
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(deliveryBody(1)).toMatchObject({
+      chat_id: '42',
+      text: expect.stringContaining('Tap a button below'),
+    });
+  });
+
+  it('authorizes a theme callback, refreshes the selector, and acknowledges it', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+    const completion = { key: 'telegram:update:done:theme-callback', ttlSeconds: 86_400 };
+
+    const result = await processTelegramUpdate(
+      themeCallback('ocean'),
+      'https://example.com',
+      completion,
+    );
+
+    expect(result.completionCommitted).toBe(true);
+    expect((await getUser('owner'))?.theme).toBe('ocean');
+    expect(fetchMock.mock.calls[0][0]).toContain('/editMessageCaption');
+    expect(deliveryBody(0)).toEqual({
+      chat_id: '42',
+      message_id: 77,
+      caption: expect.stringContaining('Current: <b>ocean</b>'),
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: 'default', callback_data: 'theme:default' },
+            { text: '✓ ocean', callback_data: 'theme:ocean' },
+          ],
+          [
+            { text: 'sunset', callback_data: 'theme:sunset' },
+            { text: 'forest', callback_data: 'theme:forest' },
+          ],
+        ],
+      },
+    });
+    expect(fetchMock.mock.calls[1][0]).toContain('/answerCallbackQuery');
+    expect(deliveryBody(1)).toEqual({
+      callback_query_id: 'callback-1',
+      text: 'Theme set to ocean.',
+    });
+  });
+
+  it('acknowledges an already selected theme without mutating or editing the selector', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+
+    const result = await processTelegramUpdate(
+      themeCallback('default'),
+      'https://example.com',
+    );
+
+    expect(result.completionCommitted).toBe(false);
+    expect((await getUser('owner'))?.theme).toBe('default');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0][0]).toContain('/answerCallbackQuery');
+    expect(deliveryBody(0)).toEqual({
+      callback_query_id: 'callback-1',
+      text: 'Already using default.',
+    });
+  });
+
+  it('preserves a selected theme when Telegram cannot edit the prior selector', async () => {
+    await seedLinkedUser();
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 500 }));
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+
+    const result = await processTelegramUpdate(
+      themeCallback('ocean'),
+      'https://example.com',
+    );
+
+    expect(result.completionCommitted).toBe(false);
+    expect((await getUser('owner'))?.theme).toBe('ocean');
+    expect(fetchMock.mock.calls[0][0]).toContain('/editMessageCaption');
+    expect(deliveryBody(1)).toMatchObject({
+      chat_id: '42',
+      text: expect.stringContaining('Current: <b>ocean</b>'),
+      reply_markup: expect.objectContaining({
+        inline_keyboard: expect.arrayContaining([
+          expect.arrayContaining([expect.objectContaining({ text: '✓ ocean' })]),
+        ]),
+      }),
+    });
+    expect(fetchMock.mock.calls[2][0]).toContain('/answerCallbackQuery');
+  });
+
+  it('rejects a callback from an unlinked Telegram user without changing the theme', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+
+    await processTelegramUpdate(themeCallback('ocean', 9), 'https://example.com');
+
+    expect((await getUser('owner'))?.theme).toBe('default');
+    expect(deliveryBody(0)).toEqual({
+      callback_query_id: 'callback-1',
+      text: 'Link Telegram in the dashboard first.',
+    });
+  });
+
+  it('acknowledges malformed callbacks with an id', async () => {
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(
+      { callback_query: { id: 'callback-2', data: 'unexpected' } },
+      'https://example.com',
+    );
+
+    expect(deliveryBody(0)).toEqual({
+      callback_query_id: 'callback-2',
+      text: 'This selection is not available.',
+    });
+  });
+
+  it('acknowledges callback failures before preserving the webhook retry error', async () => {
+    await seedLinkedUser();
+    vi.spyOn(redis, 'get').mockRejectedValueOnce(new Error('storage unavailable'));
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await expect(
+      processTelegramUpdate(themeCallback('ocean'), 'https://example.com'),
+    ).rejects.toThrow('storage unavailable');
+
+    expect(deliveryBody(0)).toEqual({
+      callback_query_id: 'callback-1',
+      text: 'Could not update the theme. Please try again.',
+    });
+  });
+
+  it('does not allow the retired minimal theme through Telegram commands or custom themes', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+
+    await processTelegramUpdate(telegramUpdate('/theme minimal'), 'https://example.com');
+    await processTelegramUpdate(
+      telegramUpdate('/theme custom add minimal #111111 #222222 #333333 #444444 #555555'),
+      'https://example.com',
+    );
+
+    expect(deliveryBody(0).text).toContain('Theme not found');
+    expect(deliveryBody(1).text).toContain('Name reserved');
+    expect((await getUser('owner'))?.customThemes).toEqual([]);
+  });
+
   it('sends status as HTML with one wallpaper button and no raw URL in the text', async () => {
     await seedLinkedUser({
       wallpaperKey: 'wallpaper-key',
@@ -356,6 +542,17 @@ function telegramUpdate(text: string) {
       text,
       chat: { id: 42, type: 'private' },
       from: { id: 42, username: 'ada' },
+    },
+  };
+}
+
+function themeCallback(themeId: string, userId = 42) {
+  return {
+    callback_query: {
+      id: 'callback-1',
+      data: `theme:${themeId}`,
+      from: { id: userId },
+      message: { message_id: 77, chat: { id: 42, type: 'private' } },
     },
   };
 }
