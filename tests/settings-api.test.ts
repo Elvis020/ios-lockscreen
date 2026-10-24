@@ -32,6 +32,16 @@ describe('settings API', () => {
     expect(body.wallpaperOptions.presets).toHaveLength(7);
     expect(body.wallpaperOptions.presentations).not.toContain('agenda');
     expect(body.wallpaperOptions.presentations).not.toContain('minimal');
+    expect(body.themes).toEqual([
+      'default',
+      'ocean',
+      'sunset',
+      'forest',
+      'midnight',
+      'frost',
+      'espresso',
+      'rosewood',
+    ]);
     expect(body.themes).not.toContain('minimal');
     expect(body.wallpaperOptions.eventCounts).toEqual([1, 2, 3, 4, 5]);
   });

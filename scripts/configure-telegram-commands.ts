@@ -14,7 +14,7 @@ export const TELEGRAM_COMMANDS: TelegramCommand[] = [
   { command: 'help', description: 'Show command help and usage examples' },
   { command: 'status', description: 'Show settings, event counts, and wallpaper URL' },
   { command: 'url', description: 'Show the current wallpaper URL' },
-  { command: 'add', description: 'Add an event: YYYY-MM-DD Event name' },
+  { command: 'add', description: 'Add an event with guided date choices' },
   { command: 'events', description: 'List manual events and their numbers' },
   {
     command: 'eventcount',

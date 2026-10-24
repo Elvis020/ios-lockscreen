@@ -3,7 +3,7 @@ import { BUILT_IN_THEMES, type WallpaperTheme } from '../lib/preferences';
 import { createThemePreviewImageResponse } from '../lib/themePreviewRenderer';
 
 describe('theme preview renderer', () => {
-  it('fits four built-ins and five custom themes in a two-column contact sheet', async () => {
+  it('fits eight built-ins and five custom themes without truncation', async () => {
     const themes = [
       ...Object.values(BUILT_IN_THEMES),
       ...Array.from({ length: 5 }, (_, index) => customTheme(index)),
@@ -14,7 +14,7 @@ describe('theme preview renderer', () => {
 
     expect(response.headers.get('content-type')).toContain('image/png');
     expect(readPngDimension(view, 16)).toBe(900);
-    expect(readPngDimension(view, 20)).toBe(1130);
+    expect(readPngDimension(view, 20)).toBe(1546);
   });
 });
 

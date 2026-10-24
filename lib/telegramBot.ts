@@ -11,27 +11,33 @@ import {
   PRESENTATIONS,
   WALLPAPER_PRESET_IDS,
   WALLPAPER_PRESETS,
+  BUILT_IN_THEMES,
 } from './preferences';
 import { createThemePreviewImageResponse } from './themePreviewRenderer';
 import { getRedis } from './redis';
 import { deleteRedisKeyIfValue } from './redisLock';
 import {
   addCustomTheme,
-  addManualEvent,
   deleteCustomTheme,
   deleteManualEventAtIndex,
   ensureWallpaperKey,
   getUser,
   linkTelegramIdentity,
   updatePreferences,
+  saveTelegramDraftEvent,
   type MutationCompletion,
 } from './tokenManager';
 import {
-  createCustomTheme,
-  isValidDateString,
-  isValidTimeZone,
-  normalizeEventName,
-} from './validation';
+  cancelTelegramDraft,
+  clearTelegramDraftDate,
+  createTelegramDraft,
+  formatTelegramEventDate,
+  getTelegramDraft,
+  parseTelegramEventInput,
+  updateTelegramDraftDate,
+  type TelegramEventDraft,
+} from './telegramDrafts';
+import { createCustomTheme, isValidDateString, isValidTimeZone } from './validation';
 
 const WALLPAPER_REFRESH_NOTE = 'Changes appear on the next iOS wallpaper refresh.';
 
@@ -55,7 +61,14 @@ export interface TelegramProcessingResult {
 }
 
 export interface TelegramInlineKeyboardMarkup {
-  inline_keyboard: Array<Array<{ text: string; url?: string; callback_data?: string }>>;
+  inline_keyboard: Array<
+    Array<{
+      text: string;
+      url?: string;
+      callback_data?: string;
+      web_app?: { url: string };
+    }>
+  >;
 }
 
 export interface TelegramReply {
@@ -80,7 +93,7 @@ export async function processTelegramUpdate(
   completion?: MutationCompletion,
 ): Promise<TelegramProcessingResult> {
   if (update.callback_query) {
-    return processThemeCallback(update.callback_query, completion);
+    return processTelegramCallback(update.callback_query, origin, completion);
   }
 
   const chatIdValue = update.message?.chat?.id;
@@ -140,12 +153,53 @@ export async function processTelegramUpdate(
       return { completionCommitted: false };
     }
 
+    if (!command.startsWith('/')) {
+      const draft = await getTelegramDraft(userId);
+
+      if (draft?.token === token && draft.chatId === chatId) {
+        if (draft.name) {
+          await sendTelegramReply(chatId, draftReply(draft, origin));
+
+          return { completionCommitted: false };
+        }
+
+        const parsed = parseTelegramEventInput(text, user.timeZone);
+
+        if (!parsed.name || parsed.error) {
+          await sendTelegramReply(
+            chatId,
+            htmlReply(
+              '<b>Event name needed</b>\nUse 1–50 characters, then choose a date.',
+            ),
+          );
+
+          return { completionCommitted: false };
+        }
+
+        const replacement = await createTelegramDraft(
+          {
+            token,
+            userId,
+            chatId,
+            name: parsed.name,
+            date: parsed.date,
+          },
+          completion,
+        );
+
+        await sendTelegramReply(chatId, draftReply(replacement, origin));
+
+        return { completionCommitted: Boolean(completion) };
+      }
+    }
+
     const result = await runLinkedTelegramCommand(
       token,
       command,
       args,
       origin,
       completion,
+      { userId, chatId, timeZone: user.timeZone },
     );
 
     if (result.themeSelector) {
@@ -179,6 +233,12 @@ async function processThemeCallback(
   const themeId = callback.data?.startsWith('theme:')
     ? callback.data.slice('theme:'.length)
     : undefined;
+  const page =
+    callback.data === 'theme-page:custom'
+      ? 'custom'
+      : callback.data === 'theme-page:builtins'
+        ? 'builtins'
+        : undefined;
 
   let acknowledgement = 'This selection is not available.';
 
@@ -187,7 +247,7 @@ async function processThemeCallback(
       callback.message?.chat?.type !== 'private' ||
       chatId === undefined ||
       userId === undefined ||
-      !themeId
+      (!themeId && !page)
     ) {
       return { completionCommitted: false };
     }
@@ -209,14 +269,32 @@ async function processThemeCallback(
       !user ||
       user.telegram?.userId !== telegramUserId ||
       user.telegram.chatId !== chat ||
-      !listAvailableThemeIds(user.customThemes).includes(themeId)
+      (themeId && !listAvailableThemeIds(user.customThemes).includes(themeId))
     ) {
+      return { completionCommitted: false };
+    }
+
+    if (page) {
+      const selector = createThemeSelector(user, page);
+
+      if (selector.themeSelector) {
+        await sendTelegramThemeSelector(chat, selector.reply, selector.themeSelector);
+      } else {
+        await sendTelegramReply(chat, selector.reply);
+      }
+
+      acknowledgement = page === 'custom' ? 'Custom themes.' : 'Built-in themes.';
+
       return { completionCommitted: false };
     }
 
     if (themeId === user.theme) {
       acknowledgement = `Already using ${themeId}.`;
 
+      return { completionCommitted: false };
+    }
+
+    if (!themeId) {
       return { completionCommitted: false };
     }
 
@@ -227,7 +305,10 @@ async function processThemeCallback(
     }
 
     if (typeof callback.message?.message_id === 'number') {
-      const selector = createThemeSelector(updatedUser);
+      const selector = createThemeSelector(
+        updatedUser,
+        BUILT_IN_THEMES[themeId] ? 'builtins' : 'custom',
+      );
 
       try {
         await editTelegramThemeSelector(
@@ -248,6 +329,168 @@ async function processThemeCallback(
     acknowledgement = 'Could not update the theme. Please try again.';
 
     throw error;
+  } finally {
+    if (callbackId) {
+      await answerTelegramCallback(callbackId, acknowledgement);
+    }
+  }
+}
+
+async function processTelegramCallback(
+  callback: NonNullable<TelegramUpdate['callback_query']>,
+  origin: string,
+  completion?: MutationCompletion,
+): Promise<TelegramProcessingResult> {
+  if (callback.data?.startsWith('ev:')) {
+    return processEventCallback(callback, origin, completion);
+  }
+
+  return processThemeCallback(callback, completion);
+}
+
+async function processEventCallback(
+  callback: NonNullable<TelegramUpdate['callback_query']>,
+  origin: string,
+  completion?: MutationCompletion,
+): Promise<TelegramProcessingResult> {
+  const callbackId = callback.id;
+  let acknowledgement = 'That event draft has expired. Start again with /add.';
+
+  try {
+    const chatId = callback.message?.chat?.id;
+    const userId = callback.from?.id;
+    const [namespace, id, revision, action] = callback.data?.split(':') ?? [];
+
+    if (
+      namespace !== 'ev' ||
+      !id ||
+      !revision ||
+      !action ||
+      chatId === undefined ||
+      userId === undefined ||
+      callback.message?.chat?.type !== 'private'
+    ) {
+      return { completionCommitted: false };
+    }
+
+    const chat = String(chatId);
+    const telegramUserId = String(userId);
+    const token = await getRedis().get<string>(`telegram:user:${telegramUserId}`);
+    const draft = await getTelegramDraft(telegramUserId);
+
+    if (
+      !token ||
+      !draft ||
+      draft.id !== id ||
+      draft.revision !== revision ||
+      draft.token !== token ||
+      draft.chatId !== chat
+    ) {
+      return { completionCommitted: false };
+    }
+
+    if (action === 'cancel') {
+      const cancelled = await cancelTelegramDraft(
+        telegramUserId,
+        id,
+        revision,
+        completion,
+      );
+
+      if (!cancelled) {
+        return { completionCommitted: false };
+      }
+
+      acknowledgement = 'Draft cancelled.';
+      await sendTelegramReply(
+        chat,
+        htmlReply('<b>Event cancelled</b>\nNothing was saved.'),
+      );
+
+      return { completionCommitted: Boolean(completion) };
+    }
+
+    if (action === 'date') {
+      const updated = await clearTelegramDraftDate(
+        telegramUserId,
+        id,
+        revision,
+        completion,
+      );
+
+      if (!updated) {
+        return { completionCommitted: false };
+      }
+
+      acknowledgement = 'Choose a new date.';
+      await sendTelegramReply(chat, draftReply(updated, origin));
+
+      return { completionCommitted: Boolean(completion) };
+    }
+
+    if (action === 'today' || action === 'tomorrow' || action === 'monday') {
+      const user = await getUser(token);
+
+      if (!user) {
+        return { completionCommitted: false };
+      }
+
+      const parsed = parseTelegramEventInput(
+        `${draft.name} ${action === 'monday' ? 'next monday' : action}`,
+        user.timeZone,
+      );
+
+      if (!parsed.date) {
+        return { completionCommitted: false };
+      }
+
+      const updated = await updateTelegramDraftDate(
+        telegramUserId,
+        id,
+        parsed.date,
+        revision,
+        completion,
+      );
+
+      if (!updated) {
+        return { completionCommitted: false };
+      }
+
+      acknowledgement = 'Date selected.';
+      await sendTelegramReply(chat, draftReply(updated, origin));
+
+      return { completionCommitted: Boolean(completion) };
+    }
+
+    if (action === 'save' && draft.date) {
+      const outcome = await saveTelegramDraftEvent(token, draft, completion);
+
+      if (outcome === 'limit') {
+        acknowledgement = 'Event limit reached.';
+        await sendTelegramReply(
+          chat,
+          expectedCommandErrorReply('Maximum 7 tracked events allowed')!,
+        );
+
+        return { completionCommitted: false };
+      }
+
+      if (outcome === 'stale') {
+        return { completionCommitted: false };
+      }
+
+      acknowledgement = outcome === 'already-saved' ? 'Already saved.' : 'Event saved.';
+      await sendTelegramReply(
+        chat,
+        htmlReply(
+          `✓ <b>Event saved</b>\n${escapeTelegramHtml(draft.name)} · ${escapeTelegramHtml(formatTelegramEventDate(draft.date))}\n${WALLPAPER_REFRESH_NOTE}`,
+        ),
+      );
+
+      return { completionCommitted: Boolean(completion) };
+    }
+
+    return { completionCommitted: false };
   } finally {
     if (callbackId) {
       await answerTelegramCallback(callbackId, acknowledgement);
@@ -460,6 +703,7 @@ async function runLinkedTelegramCommand(
   args: string[],
   origin: string,
   completion?: MutationCompletion,
+  context?: { userId: string; chatId: string; timeZone: string },
 ): Promise<LinkedCommandResult> {
   if (command === '/help') {
     return { reply: htmlReply(helpText()), completionCommitted: false };
@@ -507,26 +751,58 @@ async function runLinkedTelegramCommand(
   }
 
   if (command === '/add') {
-    const [date, ...nameParts] = args;
-    const name = normalizeEventName(nameParts.join(' '));
-
-    if (!isValidDateString(date) || !name) {
+    if (!context) {
       return {
-        reply: usageReply('Add an event', '/add YYYY-MM-DD Event name'),
+        reply: usageReply('Add an event', '/add Event name'),
         completionCommitted: false,
       };
     }
 
-    await addManualEvent(token, { name, date }, completion);
+    if (!args.length) {
+      await createTelegramDraft(
+        {
+          token,
+          userId: context.userId,
+          chatId: context.chatId,
+          name: '',
+        },
+        completion,
+      );
+
+      return {
+        reply: htmlReply('<b>Add an event</b>\nWhat should we call it?'),
+        completionCommitted: Boolean(completion),
+      };
+    }
+
+    const parsed = parseTelegramEventInput(args.join(' '), context.timeZone);
+
+    if (
+      !parsed.name ||
+      parsed.error ||
+      (parsed.date && !isValidDateString(parsed.date))
+    ) {
+      return {
+        reply: htmlReply(
+          '<b>Try a name and date</b>\nExamples: <code>Dentist tomorrow</code>, <code>Mum’s birthday 14 November</code>, or <code>Conference next Friday</code>.',
+        ),
+        completionCommitted: false,
+      };
+    }
+
+    const draft = await createTelegramDraft(
+      {
+        token,
+        userId: context.userId,
+        chatId: context.chatId,
+        name: parsed.name,
+        date: parsed.date,
+      },
+      completion,
+    );
 
     return {
-      reply: htmlReply(
-        [
-          '✓ <b>Event added</b>',
-          `${escapeTelegramHtml(name)} · ${escapeTelegramHtml(date)}`,
-          WALLPAPER_REFRESH_NOTE,
-        ].join('\n'),
-      ),
+      reply: draftReply(draft, origin),
       completionCommitted: Boolean(completion),
     };
   }
@@ -537,10 +813,9 @@ async function runLinkedTelegramCommand(
     if (!user?.events.length) {
       return {
         reply: htmlReply(
-          [
-            '<b>No manual events</b>',
-            'Add one with <code>/add YYYY-MM-DD Event name</code>.',
-          ].join('\n'),
+          ['<b>No manual events</b>', 'Add one with <code>/add Event name</code>.'].join(
+            '\n',
+          ),
         ),
         completionCommitted: false,
       };
@@ -896,55 +1171,152 @@ async function runThemeCommand(
   };
 }
 
-function availableThemes(
-  customThemes: import('./preferences').WallpaperTheme[],
-): string[] {
-  return listAvailableThemeIds(customThemes).slice(0, 9);
-}
-
 function createThemeSelector(
   user: Pick<import('./userSchema').UserData, 'theme' | 'customThemes'>,
+  page: 'builtins' | 'custom' = 'builtins',
 ): Pick<LinkedCommandResult, 'reply' | 'themeSelector'> {
-  const themes = availableThemes(user.customThemes);
+  const themes =
+    page === 'custom'
+      ? user.customThemes.map(({ id }) => id)
+      : Object.keys(BUILT_IN_THEMES);
+  const label = page === 'custom' ? 'Custom themes' : 'Choose a theme';
+  const navigation =
+    page === 'custom'
+      ? [{ text: 'Back to built-ins', callback_data: 'theme-page:builtins' }]
+      : [
+          {
+            text: `Custom themes (${user.customThemes.length})`,
+            callback_data: 'theme-page:custom',
+          },
+        ];
 
   return {
     reply: htmlReply(
       [
-        '<b>Choose a theme</b>',
+        `<b>${label}</b>`,
         '',
-        `Current: <b>${escapeTelegramHtml(user.theme)}</b>`,
-        `Available: ${themes.map(escapeTelegramHtml).join(' · ')}`,
+        `Current: <b>${escapeTelegramHtml(titleCase(user.theme))}</b>`,
+        themes.length
+          ? `Available: ${themes.map((theme) => escapeTelegramHtml(titleCase(theme))).join(' · ')}`
+          : 'No custom themes saved yet.',
         '',
-        'Tap a button below, or use <code>/theme NAME</code>.',
+        page === 'custom' && !themes.length
+          ? 'Create one with <code>/theme custom add</code>, or go back to the built-ins.'
+          : 'Tap a button below, or use <code>/theme NAME</code>.',
       ].join('\n'),
-      themeKeyboard(themes, user.theme),
+      themeKeyboard(themes, user.theme, navigation),
     ),
-    themeSelector: {
-      themes: themes.map((id) => resolveTheme(id, user.customThemes)),
-    },
+    ...(themes.length
+      ? {
+          themeSelector: {
+            themes: themes.map((id) => resolveTheme(id, user.customThemes)),
+          },
+        }
+      : {}),
   };
+}
+
+function draftReply(draft: TelegramEventDraft, origin: string): TelegramReply {
+  if (!draft.name) {
+    return htmlReply('<b>Add an event</b>\nWhat should we call it?');
+  }
+
+  const prefix = `ev:${draft.id}:${draft.revision}:`;
+
+  if (draft.date) {
+    return htmlReply(
+      `<b>Save this event?</b>\nEvent: <b>${escapeTelegramHtml(draft.name)}</b>\nDate: <b>${escapeTelegramHtml(formatTelegramEventDate(draft.date))}</b>`,
+      {
+        inline_keyboard: [
+          [
+            { text: 'Save event', callback_data: `${prefix}save` },
+            { text: 'Change date', callback_data: `${prefix}date` },
+          ],
+          [{ text: 'Cancel', callback_data: `${prefix}cancel` }],
+        ],
+      },
+    );
+  }
+
+  const calendarUrl = `${calendarOrigin(origin)}/api/telegram/calendar?draft=${encodeURIComponent(draft.id)}`;
+
+  return htmlReply(
+    `<b>When is ${escapeTelegramHtml(draft.name)}?</b>\nNothing is saved until you confirm.`,
+    {
+      inline_keyboard: [
+        [
+          { text: 'Today', callback_data: `${prefix}today` },
+          { text: 'Tomorrow', callback_data: `${prefix}tomorrow` },
+        ],
+        [
+          { text: 'Next Monday', callback_data: `${prefix}monday` },
+          { text: 'Choose date', web_app: { url: calendarUrl } },
+        ],
+        [{ text: 'Cancel', callback_data: `${prefix}cancel` }],
+      ],
+    },
+  );
+}
+
+function calendarOrigin(fallback: string): string {
+  const configured =
+    process.env.PUBLIC_APP_ORIGIN ?? process.env.VERCEL_PROJECT_PRODUCTION_URL;
+
+  for (const candidate of [
+    configured
+      ? configured.startsWith('http')
+        ? configured
+        : `https://${configured}`
+      : undefined,
+    fallback,
+  ]) {
+    if (!candidate) {
+      continue;
+    }
+
+    try {
+      const url = new URL(candidate);
+
+      if (url.protocol === 'https:' || url.hostname === 'localhost') {
+        return url.origin;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error('Telegram Mini App origin is invalid');
 }
 
 function themeKeyboard(
   themeIds: string[],
   currentThemeId: string,
+  navigation: { text: string; callback_data: string }[],
 ): TelegramInlineKeyboardMarkup {
   return {
-    inline_keyboard: themeIds.reduce<
-      Array<Array<{ text: string; callback_data: string }>>
-    >((rows, themeId, index) => {
-      if (index % 2 === 0) {
-        rows.push([]);
-      }
+    inline_keyboard: themeIds
+      .reduce<Array<Array<{ text: string; callback_data: string }>>>(
+        (rows, themeId, index) => {
+          if (index % 2 === 0) {
+            rows.push([]);
+          }
 
-      rows.at(-1)?.push({
-        text: themeId === currentThemeId ? `✓ ${themeId}` : themeId,
-        callback_data: `theme:${themeId}`,
-      });
+          rows.at(-1)?.push({
+            text:
+              themeId === currentThemeId ? `✓ ${titleCase(themeId)}` : titleCase(themeId),
+            callback_data: `theme:${themeId}`,
+          });
 
-      return rows;
-    }, []),
+          return rows;
+        },
+        [],
+      )
+      .concat([navigation]),
   };
+}
+
+function titleCase(value: string): string {
+  return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function helpText(): string {
@@ -956,7 +1328,8 @@ function helpText(): string {
     '<code>/url</code>  Copy wallpaper URL',
     '',
     '<b>Events</b>',
-    '<code>/add YYYY-MM-DD Event name</code>',
+    '<code>/add Event name</code>  Guided date picker',
+    '<code>/add Dentist tomorrow</code>  Natural dates work too',
     '<code>/events</code>',
     '<code>/eventcount 1|2|3|4|5</code>  Events shown (default 2)',
     '<code>/delete NUMBER</code>',

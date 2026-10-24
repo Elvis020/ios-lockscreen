@@ -84,6 +84,8 @@ export interface WallpaperEventLayout {
   columns: number;
   columnGap: number;
   cellWidth: number;
+  railLeft: number;
+  railWidth: number;
   rows: number;
   nameSize: number;
   countdownSize: number;
@@ -151,6 +153,7 @@ function createEventLayout(
   const contentHeight =
     rows * rowHeight + Math.max(0, rows - 1) * rowGap + (overflow ? overflowHeight : 0);
   const columnGap = 28;
+  const railWidth = WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT;
 
   return {
     limit,
@@ -163,9 +166,9 @@ function createEventLayout(
     lift: model.presentation === 'calendar' ? (largeClock ? 48 : 32) : 0,
     columns,
     columnGap,
-    cellWidth:
-      (WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT - (columns - 1) * columnGap) /
-      columns,
+    cellWidth: (railWidth - (columns - 1) * columnGap) / columns,
+    railLeft: 0,
+    railWidth,
     rows,
     nameSize: dense ? 24 : compact ? 34 : 40,
     countdownSize: dense ? 22 : compact ? 30 : 32,
@@ -174,6 +177,19 @@ function createEventLayout(
     visibleCount,
     overflow,
     contentHeight,
+  };
+}
+
+function constrainEventRail(
+  events: WallpaperEventLayout,
+  railLeft: number,
+  railWidth: number,
+): WallpaperEventLayout {
+  return {
+    ...events,
+    railLeft,
+    railWidth,
+    cellWidth: (railWidth - (events.columns - 1) * events.columnGap) / events.columns,
   };
 }
 
@@ -248,13 +264,20 @@ function solveDotComposition(model: WallpaperModel) {
       continue;
     }
 
+    const ringOutset = grid.eventRingGap + grid.eventRingWidth;
+    const constrainedEvents = constrainEventRail(
+      events,
+      grid.positions[0].x - ringOutset,
+      grid.width,
+    );
+
     const bottom = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile].bottom;
     const preferredEventsTop = model.lockScreenProfile === 'large-clock' ? 1812 : 1720;
     const eventsTop = Math.max(
       Math.min(
         preferredEventsTop,
         grid.top + grid.height + MAX_DOT_EVENTS_GAP,
-        bottom - events.slotHeight,
+        bottom - constrainedEvents.slotHeight,
       ),
       grid.top + grid.height + DOT_EVENTS_GAP,
     );
@@ -263,17 +286,17 @@ function solveDotComposition(model: WallpaperModel) {
     const top = grid.top - headerHeight - headerGap;
     const composition: CalendarComposition = {
       top,
-      height: eventsTop + events.slotHeight - top,
+      height: eventsTop + constrainedEvents.slotHeight - top,
       headerHeight,
       headerGap,
       calendarTop: grid.top,
       calendarHeight: eventsTop - DOT_EVENTS_GAP - grid.top,
       eventGap: DOT_EVENTS_GAP,
       eventsTop,
-      eventsHeight: events.slotHeight,
+      eventsHeight: constrainedEvents.slotHeight,
     };
 
-    return { grid, events, composition };
+    return { grid, events: constrainedEvents, composition };
   }
 
   throw new Error('Unable to fit the dot field and selected events in the content band');

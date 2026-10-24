@@ -156,6 +156,15 @@ describe('continuous dot progress layout', () => {
               expect(events.visibleCount).toBe(Math.min(actualCount, eventCount));
               expect(events.overflow).toBe(Math.max(0, actualCount - eventCount));
               expect(events.contentHeight).toBeLessThanOrEqual(events.slotHeight);
+              expect(events.railLeft).toBe(grid.positions[0].x - outset);
+              expect(events.railWidth).toBe(grid.width);
+              expect(events.railLeft + events.railWidth / 2).toBe(
+                (WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT) / 2,
+              );
+              expect(events.cellWidth).toBe(
+                (events.railWidth - (events.columns - 1) * events.columnGap) /
+                  events.columns,
+              );
               expect(bounds.contentTop).toBe(composition.top);
               for (const position of grid.positions) {
                 expect([position.x, position.y, grid.size].every(Number.isInteger)).toBe(
@@ -190,6 +199,20 @@ describe('continuous dot progress layout', () => {
       slotHeight: 194,
     });
   });
+
+  it.each(['agenda', 'countdown', 'minimal'] as const)(
+    'keeps the content-width event rail for %s',
+    (presentation) => {
+      const layout = getWallpaperEventLayout(
+        buildWallpaperModel({ date, presentation, publicEvents }),
+      );
+
+      expect(layout).toMatchObject({
+        railLeft: 0,
+        railWidth: WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT,
+      });
+    },
+  );
 
   it('adapts Quarter to the actual rail while making Year larger and less horizontally airy', () => {
     const options = {

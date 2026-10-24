@@ -10,6 +10,7 @@ import {
   TIME_RANGES,
 } from '../lib/preferences';
 import {
+  CONTENT_LEFT,
   getCalendarComposition,
   getContinuousDotGridLayout,
   FIRST_DOT_TOP,
@@ -190,6 +191,56 @@ describe('native wallpaper scene', () => {
       size: 30,
       color: model.theme.text,
       align: 'right',
+    });
+  });
+
+  it.each(['calendar', 'hybrid', 'progress'] as const)(
+    'constrains the %s native event rail to the dot outer-ring envelope',
+    (presentation) => {
+      const model = buildWallpaperModel({
+        date,
+        presentation,
+        timeRange: 'quarter',
+        eventCount: 1,
+        publicEvents,
+      });
+      const layout = getWallpaperEventLayout(model);
+      const scene = buildNativeWallpaperScene(model);
+      const eventName = scene.commands.find(
+        (command) => command.kind === 'text' && command.value === 'Réunion 🎉',
+      );
+      const countdown = scene.commands.find(
+        (command) => command.kind === 'text' && command.value === 'Today',
+      );
+      const timer = scene.commands.find(
+        (command) => command.kind === 'roundRect' && command.height === 3,
+      );
+
+      expect(eventName).toMatchObject({
+        x: CONTENT_LEFT + layout.railLeft,
+        width: layout.cellWidth - 140 - 28,
+      });
+      expect(countdown).toMatchObject({
+        x: CONTENT_LEFT + layout.railLeft + layout.cellWidth - 140,
+        width: 140,
+      });
+      expect(timer).toMatchObject({
+        x: CONTENT_LEFT + layout.railLeft,
+        width: layout.cellWidth,
+      });
+    },
+  );
+
+  it('constrains the grouped native empty state to the dot outer-ring envelope', () => {
+    const model = buildWallpaperModel({ date, timeRange: 'month' });
+    const layout = getWallpaperEventLayout(model);
+    const empty = buildNativeWallpaperScene(model).commands.find(
+      (command) => command.kind === 'text' && command.value === 'No upcoming events',
+    );
+
+    expect(empty).toMatchObject({
+      x: CONTENT_LEFT + layout.railLeft,
+      width: layout.railWidth,
     });
   });
 

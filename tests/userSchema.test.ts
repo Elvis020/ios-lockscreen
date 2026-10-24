@@ -51,7 +51,7 @@ describe('normalizeUserData', () => {
     );
 
     expect(user).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       token: 'legacy-token',
       timeRange: 'quarter',
       presentation: 'calendar',
@@ -66,6 +66,34 @@ describe('normalizeUserData', () => {
     });
     expect(user?.selectedEventIds).toEqual([]);
     expect(user?.customThemes).toEqual([]);
+  });
+
+  it('preserves a legacy custom theme that now collides with a built-in', () => {
+    const user = normalizeUserData(
+      {
+        schemaVersion: 3,
+        theme: 'midnight',
+        customThemes: [
+          {
+            id: 'midnight',
+            background: '#010203',
+            passed: '#111111',
+            weekend: '#222222',
+            current: '#333333',
+            future: '#444444',
+            text: '#EEEEEE',
+            subtext: '#999999',
+          },
+        ],
+      },
+      'owner',
+    );
+
+    expect(user?.schemaVersion).toBe(4);
+    expect(user?.theme).toBe('midnight-custom');
+    expect(user?.customThemes).toEqual([
+      expect.objectContaining({ id: 'midnight-custom', background: '#010203' }),
+    ]);
   });
 
   it('preserves a legacy account period while accepting v3 wallpaper settings', () => {

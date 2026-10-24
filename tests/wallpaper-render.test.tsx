@@ -194,6 +194,41 @@ describe('wallpaper renderer', () => {
     expect(text).not.toContain('Q4 2026');
   });
 
+  it.each(['calendar', 'hybrid', 'progress'] as const)(
+    'constrains the %s PNG event rail to the dot outer-ring envelope',
+    (presentation) => {
+      const model = buildWallpaperModel({
+        date,
+        presentation,
+        timeRange: 'quarter',
+        eventCount: 1,
+        publicEvents: events,
+      });
+      const layout = getWallpaperEventLayout(model);
+      const { styles } = inspectCanvas(WallpaperCanvas({ model }));
+
+      expect(
+        styles.some(
+          ({ width, marginLeft }) =>
+            width === layout.railWidth && marginLeft === layout.railLeft,
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it('constrains the grouped PNG empty state to the dot outer-ring envelope', () => {
+    const model = buildWallpaperModel({ date, timeRange: 'month' });
+    const layout = getWallpaperEventLayout(model);
+    const { styles } = inspectCanvas(WallpaperCanvas({ model }));
+
+    expect(
+      styles.some(
+        ({ width, marginLeft }) =>
+          width === layout.railWidth && marginLeft === layout.railLeft,
+      ),
+    ).toBe(true);
+  });
+
   it('places every PNG dot using the shared continuous sequence without blank day cells', () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
       for (const timeRange of ['month', 'quarter'] as const) {

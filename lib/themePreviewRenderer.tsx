@@ -7,7 +7,7 @@ const CARD_HEIGHT = 190;
 const COLUMNS = 2;
 
 export function createThemePreviewImageResponse(themes: WallpaperTheme[]): ImageResponse {
-  const visibleThemes = themes.slice(0, 9);
+  const visibleThemes = themes;
   const rows = Math.max(1, Math.ceil(visibleThemes.length / COLUMNS));
   const height = 90 + rows * 208;
 

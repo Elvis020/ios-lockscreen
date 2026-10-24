@@ -46,7 +46,7 @@ export interface TelegramLink {
 }
 
 export interface UserData {
-  schemaVersion: 3;
+  schemaVersion: 4;
   token: string;
   wallpaperKey?: string;
   name: string;
@@ -74,12 +74,19 @@ export function normalizeUserData(raw: unknown, token: string): UserData | null 
   }
 
   const record = raw as UnknownRecord;
-  const customThemes = normalizeCustomThemes(record.customThemes);
-  const theme = normalizeTheme(record.theme, customThemes);
+  const { customThemes, renamedThemeIds } = normalizeCustomThemes(
+    record.customThemes,
+    record.schemaVersion,
+  );
+  const selectedTheme =
+    typeof record.theme === 'string'
+      ? (renamedThemeIds.get(record.theme) ?? record.theme)
+      : record.theme;
+  const theme = normalizeTheme(selectedTheme, customThemes);
 
   return {
     ...record,
-    schemaVersion: 3,
+    schemaVersion: 4,
     token: typeof record.token === 'string' ? record.token : token,
     wallpaperKey:
       typeof record.wallpaperKey === 'string' && record.wallpaperKey
@@ -238,32 +245,76 @@ function normalizeCalendarEvents(value: unknown): CalendarEvent[] {
   });
 }
 
-function normalizeCustomThemes(value: unknown): WallpaperTheme[] {
+const NEW_BUILT_IN_THEME_IDS = new Set(['midnight', 'frost', 'espresso', 'rosewood']);
+
+function normalizeCustomThemes(
+  value: unknown,
+  schemaVersion: unknown,
+): {
+  customThemes: WallpaperTheme[];
+  renamedThemeIds: Map<string, string>;
+} {
   if (!Array.isArray(value)) {
-    return [];
+    return { customThemes: [], renamedThemeIds: new Map() };
   }
 
-  return value
-    .filter((theme): theme is WallpaperTheme => {
-      if (!theme || typeof theme !== 'object' || Array.isArray(theme)) {
-        return false;
+  const renamedThemeIds = new Map<string, string>();
+  const validThemes = value.filter((theme): theme is WallpaperTheme => {
+    if (!theme || typeof theme !== 'object' || Array.isArray(theme)) {
+      return false;
+    }
+
+    const candidate = theme as UnknownRecord;
+
+    return (
+      typeof candidate.id === 'string' &&
+      typeof candidate.background === 'string' &&
+      typeof candidate.passed === 'string' &&
+      typeof candidate.weekend === 'string' &&
+      typeof candidate.current === 'string' &&
+      typeof candidate.future === 'string' &&
+      typeof candidate.text === 'string' &&
+      typeof candidate.subtext === 'string'
+    );
+  });
+  const customThemes: WallpaperTheme[] = [];
+  const usedIds = new Set(validThemes.map(({ id }) => id));
+
+  for (const theme of validThemes) {
+    if (!isReservedThemeId(theme.id)) {
+      customThemes.push(theme);
+
+      if (customThemes.length === 5) {
+        break;
       }
 
-      const candidate = theme as UnknownRecord;
+      continue;
+    }
 
-      return (
-        typeof candidate.id === 'string' &&
-        !isReservedThemeId(candidate.id) &&
-        typeof candidate.background === 'string' &&
-        typeof candidate.passed === 'string' &&
-        typeof candidate.weekend === 'string' &&
-        typeof candidate.current === 'string' &&
-        typeof candidate.future === 'string' &&
-        typeof candidate.text === 'string' &&
-        typeof candidate.subtext === 'string'
-      );
-    })
-    .slice(0, 5);
+    if (schemaVersion === 4 || !NEW_BUILT_IN_THEME_IDS.has(theme.id)) {
+      continue;
+    }
+
+    let id = `${theme.id}-custom`;
+    let suffix = 2;
+
+    while (isReservedThemeId(id) || usedIds.has(id)) {
+      id = `${theme.id}-custom-${suffix++}`;
+    }
+
+    if (!renamedThemeIds.has(theme.id)) {
+      renamedThemeIds.set(theme.id, id);
+    }
+    usedIds.add(id);
+
+    customThemes.push({ ...theme, id });
+
+    if (customThemes.length === 5) {
+      break;
+    }
+  }
+
+  return { customThemes, renamedThemeIds };
 }
 
 function normalizeStringArray(value: unknown): string[] {

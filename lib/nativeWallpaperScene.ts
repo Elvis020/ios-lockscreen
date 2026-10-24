@@ -272,6 +272,8 @@ function addEmptyEvents(
   top: number,
   height: number,
   compact = false,
+  left = CONTENT_LEFT,
+  width = CONTENT_WIDTH,
 ): void {
   const size = compact ? 24 : 38;
 
@@ -279,9 +281,9 @@ function addEmptyEvents(
     scene,
     'No upcoming events',
     {
-      x: CONTENT_LEFT,
+      x: left,
       y: top + (height - size * 1.2) / 2,
-      width: CONTENT_WIDTH,
+      width,
       height: size * 1.2,
     },
     model.theme.text,
@@ -468,7 +470,15 @@ function addEvents(
   const visible = model.events.slice(layout.startIndex, layout.limit);
 
   if (!model.events.length) {
-    addEmptyEvents(scene, model, top, layout.slotHeight, layout.compact);
+    addEmptyEvents(
+      scene,
+      model,
+      top,
+      layout.slotHeight,
+      layout.compact,
+      CONTENT_LEFT + layout.railLeft,
+      layout.railWidth,
+    );
 
     return;
   }
@@ -477,7 +487,9 @@ function addEvents(
     const rowTop =
       top + Math.floor(index / layout.columns) * (layout.rowHeight + layout.rowGap);
     const left =
-      CONTENT_LEFT + (index % layout.columns) * (layout.cellWidth + layout.columnGap);
+      CONTENT_LEFT +
+      layout.railLeft +
+      (index % layout.columns) * (layout.cellWidth + layout.columnGap);
 
     addEventRow(scene, model, event, rowTop, left, layout.cellWidth);
   }
@@ -489,13 +501,13 @@ function addEvents(
       scene,
       `+${overflow} more`,
       {
-        x: CONTENT_LEFT,
+        x: CONTENT_LEFT + layout.railLeft,
         y:
           top +
           layout.rows * layout.rowHeight +
           Math.max(0, layout.rows - 1) * layout.rowGap +
           Math.max(0, layout.overflowHeight - (layout.compact ? 24 : 29)),
-        width: CONTENT_WIDTH,
+        width: layout.railWidth,
         height: layout.compact ? 24 : 29,
       },
       model.theme.subtext,

@@ -26,17 +26,21 @@ describe('Telegram mutation idempotency', () => {
     vi.restoreAllMocks();
   });
 
-  it('does not duplicate an add when the former outer done write would fail', async () => {
+  it('does not duplicate a confirmed event when the outer done write would fail', async () => {
     await seedLinkedUser();
-    const doneKey = 'telegram:update:done:501';
+    const { default: handler } = await import('../api/telegram/webhook');
+    const addUpdate = telegramUpdate(501, '/add 2026-11-01 Launch');
+
+    expect((await handler(request(addUpdate))).status).toBe(200);
+
+    const draft = await redis.get<{ id: string; revision: string }>('telegram:draft:42');
+    const doneKey = 'telegram:update:done:502';
+    const saveUpdate = callbackUpdate(502, `ev:${draft?.id}:${draft?.revision}:save`);
 
     redis.failDirectSetKeys.add(doneKey);
 
-    const { default: handler } = await import('../api/telegram/webhook');
-    const update = telegramUpdate(501, '/add 2026-11-01 Launch');
-
-    expect((await handler(request(update))).status).toBe(200);
-    expect((await handler(request(update))).status).toBe(200);
+    expect((await handler(request(saveUpdate))).status).toBe(200);
+    expect((await handler(request(saveUpdate))).status).toBe(200);
 
     const user = await redis.get<{ events: Array<{ name: string }> }>('user:owner');
 
@@ -132,6 +136,18 @@ function telegramUpdate(updateId: number, text: string) {
       text,
       chat: { id: 42, type: 'private' },
       from: { id: 42, username: 'ada' },
+    },
+  };
+}
+
+function callbackUpdate(updateId: number, data: string) {
+  return {
+    update_id: updateId,
+    callback_query: {
+      id: `callback-${updateId}`,
+      data,
+      from: { id: 42 },
+      message: { message_id: 77, chat: { id: 42, type: 'private' } },
     },
   };
 }

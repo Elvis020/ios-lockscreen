@@ -105,21 +105,22 @@ describe('Telegram commands', () => {
     const form = init.body as FormData;
 
     expect(url).toContain('/sendPhoto');
-    expect(form.get('caption')).toContain('Current: <b>ocean</b>');
+    expect(form.get('caption')).toContain('Current: <b>Ocean</b>');
     expect(form.get('caption')).not.toContain('wallpaper-key');
     expect(form.get('photo')).toBeInstanceOf(Blob);
-    expect(JSON.parse(String(form.get('reply_markup')))).toEqual({
-      inline_keyboard: [
-        [
-          { text: 'default', callback_data: 'theme:default' },
-          { text: '✓ ocean', callback_data: 'theme:ocean' },
-        ],
-        [
-          { text: 'sunset', callback_data: 'theme:sunset' },
-          { text: 'forest', callback_data: 'theme:forest' },
-        ],
-      ],
-    });
+    const buttons = JSON.parse(String(form.get('reply_markup'))).inline_keyboard.flat();
+
+    expect(buttons).toEqual([
+      { text: 'Default', callback_data: 'theme:default' },
+      { text: '✓ Ocean', callback_data: 'theme:ocean' },
+      { text: 'Sunset', callback_data: 'theme:sunset' },
+      { text: 'Forest', callback_data: 'theme:forest' },
+      { text: 'Midnight', callback_data: 'theme:midnight' },
+      { text: 'Frost', callback_data: 'theme:frost' },
+      { text: 'Espresso', callback_data: 'theme:espresso' },
+      { text: 'Rosewood', callback_data: 'theme:rosewood' },
+      { text: 'Custom themes (0)', callback_data: 'theme-page:custom' },
+    ]);
   });
 
   it('falls back to the text selector when the preview photo cannot be delivered', async () => {
@@ -134,6 +135,32 @@ describe('Telegram commands', () => {
       chat_id: '42',
       text: expect.stringContaining('Tap a button below'),
     });
+  });
+
+  it('opens custom themes as a separate visual page without hiding them', async () => {
+    await seedLinkedUser({
+      customThemes: [
+        {
+          ...themeRecord('starlight'),
+          background: '#101522',
+        },
+      ],
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(themePageCallback('custom'), 'https://example.com');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const form = init.body as FormData;
+    const buttons = JSON.parse(String(form.get('reply_markup'))).inline_keyboard.flat();
+
+    expect(url).toContain('/sendPhoto');
+    expect(form.get('caption')).toContain('<b>Custom themes</b>');
+    expect(buttons).toEqual([
+      { text: 'Starlight', callback_data: 'theme:starlight' },
+      { text: 'Back to built-ins', callback_data: 'theme-page:builtins' },
+    ]);
+    expect(fetchMock.mock.calls[1][0]).toContain('/answerCallbackQuery');
   });
 
   it('authorizes a theme callback, refreshes the selector, and acknowledges it', async () => {
@@ -151,24 +178,19 @@ describe('Telegram commands', () => {
     expect(result.completionCommitted).toBe(true);
     expect((await getUser('owner'))?.theme).toBe('ocean');
     expect(fetchMock.mock.calls[0][0]).toContain('/editMessageCaption');
-    expect(deliveryBody(0)).toEqual({
+    expect(deliveryBody(0)).toMatchObject({
       chat_id: '42',
       message_id: 77,
-      caption: expect.stringContaining('Current: <b>ocean</b>'),
+      caption: expect.stringContaining('Current: <b>Ocean</b>'),
       parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: 'default', callback_data: 'theme:default' },
-            { text: '✓ ocean', callback_data: 'theme:ocean' },
-          ],
-          [
-            { text: 'sunset', callback_data: 'theme:sunset' },
-            { text: 'forest', callback_data: 'theme:forest' },
-          ],
-        ],
-      },
     });
+    expect(deliveryBody(0).reply_markup.inline_keyboard.flat()).toEqual(
+      expect.arrayContaining([
+        { text: '✓ Ocean', callback_data: 'theme:ocean' },
+        { text: 'Midnight', callback_data: 'theme:midnight' },
+        { text: 'Rosewood', callback_data: 'theme:rosewood' },
+      ]),
+    );
     expect(fetchMock.mock.calls[1][0]).toContain('/answerCallbackQuery');
     expect(deliveryBody(1)).toEqual({
       callback_query_id: 'callback-1',
@@ -212,10 +234,10 @@ describe('Telegram commands', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('/editMessageCaption');
     expect(deliveryBody(1)).toMatchObject({
       chat_id: '42',
-      text: expect.stringContaining('Current: <b>ocean</b>'),
+      text: expect.stringContaining('Current: <b>Ocean</b>'),
       reply_markup: expect.objectContaining({
         inline_keyboard: expect.arrayContaining([
-          expect.arrayContaining([expect.objectContaining({ text: '✓ ocean' })]),
+          expect.arrayContaining([expect.objectContaining({ text: '✓ Ocean' })]),
         ]),
       }),
     });
@@ -327,10 +349,13 @@ describe('Telegram commands', () => {
       telegramUpdate(`/add 2026-11-01 <b>A&B</b> "Q" 'R'`),
       'https://example.com',
     );
+    const saveCallback = deliveryBody(0).reply_markup.inline_keyboard[0][0].callback_data;
+
+    await processTelegramUpdate(eventCallback(saveCallback), 'https://example.com');
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
     const addBody = deliveryBody(0);
-    const listBody = deliveryBody(1);
+    const listBody = deliveryBody(3);
     const escapedName = '&lt;b&gt;A&amp;B&lt;/b&gt; &quot;Q&quot; &#39;R&#39;';
 
     expect(addBody.parse_mode).toBe('HTML');
@@ -338,6 +363,37 @@ describe('Telegram commands', () => {
     expect(listBody.parse_mode).toBe('HTML');
     expect(listBody.text).toContain(escapedName);
     expect(listBody.text).not.toContain('<b>A&B</b>');
+  });
+
+  it('guides event names through quick dates and an in-Telegram calendar', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+
+    await processTelegramUpdate(telegramUpdate('/add'), 'https://example.com');
+    await processTelegramUpdate(telegramUpdate('Dentist'), 'https://example.com');
+
+    const dateChoice = deliveryBody(1);
+    const buttons = dateChoice.reply_markup.inline_keyboard.flat();
+    const today = buttons.find(({ text }: { text: string }) => text === 'Today');
+    const calendar = buttons.find(({ text }: { text: string }) => text === 'Choose date');
+
+    expect(deliveryBody(0).text).toContain('What should we call it?');
+    expect(dateChoice.text).toContain('When is Dentist?');
+    expect(calendar.web_app.url).toMatch(
+      /^https:\/\/example\.com\/api\/telegram\/calendar\?draft=/,
+    );
+    expect(today.callback_data.length).toBeLessThanOrEqual(64);
+    expect(calendar.web_app.url).not.toContain('owner');
+
+    await processTelegramUpdate(
+      eventCallback(today.callback_data),
+      'https://example.com',
+    );
+
+    expect(deliveryBody(2).text).toContain('<b>Save this event?</b>');
+    expect(deliveryBody(2).text).toMatch(/Date: <b>.+ \d{4}<\/b>/);
+    expect((await getUser('owner'))?.events).toEqual([]);
   });
 
   it('uses calm, consistent copy for empty, usage, and unknown responses', async () => {
@@ -349,11 +405,9 @@ describe('Telegram commands', () => {
     await processTelegramUpdate(telegramUpdate('/something'), 'https://example.com');
 
     expect(deliveryBody(0).text).toBe(
-      '<b>No manual events</b>\nAdd one with <code>/add YYYY-MM-DD Event name</code>.',
+      '<b>No manual events</b>\nAdd one with <code>/add Event name</code>.',
     );
-    expect(deliveryBody(1).text).toBe(
-      '<b>Add an event</b>\n<code>/add YYYY-MM-DD Event name</code>',
-    );
+    expect(deliveryBody(1).text).toContain('<b>Try a name and date</b>');
     expect(deliveryBody(2).text).toBe(
       '<b>Command not recognised</b>\nUse <code>/help</code> to see available commands.',
     );
@@ -382,11 +436,14 @@ describe('Telegram commands', () => {
       telegramUpdate('/add 2026-11-01 Eighth event'),
       'https://example.com',
     );
+    const saveCallback = deliveryBody(0).reply_markup.inline_keyboard[0][0].callback_data;
 
-    expect(deliveryBody(0).text).toBe(
+    await processTelegramUpdate(eventCallback(saveCallback), 'https://example.com');
+
+    expect(deliveryBody(1).text).toBe(
       '<b>Event limit reached</b>\nKeep up to 7 tracked events. Delete one before adding another.',
     );
-    expect(deliveryBody(0).text).not.toContain('Maximum 7 tracked events allowed');
+    expect(deliveryBody(1).text).not.toContain('Maximum 7 tracked events allowed');
   });
 
   it('updates presets and independent wallpaper dimensions', async () => {
@@ -440,7 +497,7 @@ describe('Telegram commands', () => {
     await seedLinkedUser({
       customThemes: [
         {
-          id: 'midnight',
+          id: 'moody',
           background: '#111111',
           passed: '#222222',
           weekend: '#333333',
@@ -458,12 +515,12 @@ describe('Telegram commands', () => {
     };
 
     const first = await processTelegramUpdate(
-      telegramUpdate('/theme custom delete midnight'),
+      telegramUpdate('/theme custom delete moody'),
       'https://example.com',
       completion,
     );
     const replay = await processTelegramUpdate(
-      telegramUpdate('/theme custom delete midnight'),
+      telegramUpdate('/theme custom delete moody'),
       'https://example.com',
       completion,
     );
@@ -495,7 +552,7 @@ async function seedLinkedUser(overrides: Partial<UserData> = {}): Promise<void> 
 
 function userRecord(): UserData {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     token: 'owner',
     name: 'Ada',
     theme: 'default',
@@ -554,6 +611,41 @@ function themeCallback(themeId: string, userId = 42) {
       from: { id: userId },
       message: { message_id: 77, chat: { id: 42, type: 'private' } },
     },
+  };
+}
+
+function themePageCallback(page: 'custom' | 'builtins') {
+  return {
+    callback_query: {
+      id: 'callback-page',
+      data: `theme-page:${page}`,
+      from: { id: 42 },
+      message: { message_id: 77, chat: { id: 42, type: 'private' } },
+    },
+  };
+}
+
+function eventCallback(data: string, callbackId = 'event-callback') {
+  return {
+    callback_query: {
+      id: callbackId,
+      data,
+      from: { id: 42 },
+      message: { message_id: 88, chat: { id: 42, type: 'private' } },
+    },
+  };
+}
+
+function themeRecord(id: string) {
+  return {
+    id,
+    background: '#111111',
+    passed: '#222222',
+    weekend: '#333333',
+    current: '#444444',
+    future: '#555555',
+    text: '#E5E5E5',
+    subtext: '#A1A1A1',
   };
 }
 

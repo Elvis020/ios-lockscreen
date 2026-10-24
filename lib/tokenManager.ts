@@ -21,6 +21,7 @@ import {
   type TelegramLink,
   type UserData,
 } from './userSchema';
+import { draftKey, type TelegramEventDraft } from './telegramDrafts';
 
 export type { CalendarEvent, GoogleAccount, ManualEvent, UserData } from './userSchema';
 
@@ -61,7 +62,7 @@ export async function createUser(
     const token = generateUUID();
     const wallpaperKey = generateUUID();
     const userData: UserData = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       token,
       wallpaperKey,
       name: name.trim(),
@@ -156,6 +157,96 @@ export async function addManualEvent(
       });
     },
     completion,
+  );
+}
+
+export async function saveTelegramDraftEvent(
+  token: string,
+  draft: Pick<TelegramEventDraft, 'id' | 'revision' | 'userId' | 'name' | 'date'>,
+  completion?: MutationCompletion,
+): Promise<'saved' | 'already-saved' | 'stale' | 'limit'> {
+  const redis = getRedis();
+  const saveKey = `telegram:draft:completion:${draft.id}:${draft.revision}`;
+
+  return withRedisLocks(
+    redis,
+    [`user:${token}`, draftKey(draft.userId)],
+    async (leases) => {
+      if (await redis.get(saveKey)) {
+        if (completion) {
+          await commitIfLeasesOwned(redis, leases, [
+            {
+              key: completion.key,
+              value: 'done',
+              ttlSeconds: completion.ttlSeconds,
+            },
+          ]);
+        }
+
+        return 'already-saved';
+      }
+
+      const active = await redis.get<TelegramEventDraft>(draftKey(draft.userId));
+
+      if (
+        !active ||
+        active.id !== draft.id ||
+        active.revision !== draft.revision ||
+        active.userId !== draft.userId ||
+        active.token !== token ||
+        typeof active.expiresAt !== 'number' ||
+        active.expiresAt <= Date.now() ||
+        !active.date
+      ) {
+        return 'stale';
+      }
+
+      const user = await readUser(redis, token);
+
+      if (!user) {
+        throw new Error('Linked account no longer exists');
+      }
+
+      if (
+        user.telegram?.userId !== active.userId ||
+        user.telegram.chatId !== active.chatId
+      ) {
+        return 'stale';
+      }
+
+      if (user.events.length + user.selectedEventIds.length >= 7) {
+        return 'limit';
+      }
+
+      user.events.push({
+        id: generateUUID(),
+        name: active.name,
+        date: active.date,
+        source: 'manual',
+        createdAt: new Date().toISOString(),
+      });
+
+      const wallpaperKey = user.wallpaperKey ?? generateUUID();
+
+      user.wallpaperKey = wallpaperKey;
+      const sets: RedisFencedSet[] = [
+        { key: `user:${token}`, value: user },
+        { key: `wallpaper:${wallpaperKey}`, value: token },
+        { key: saveKey, value: 'done', ttlSeconds: 86_400 },
+      ];
+
+      if (completion) {
+        sets.push({
+          key: completion.key,
+          value: 'done',
+          ttlSeconds: completion.ttlSeconds,
+        });
+      }
+
+      await commitIfLeasesOwned(redis, leases, sets, [draftKey(draft.userId)]);
+
+      return 'saved';
+    },
   );
 }
 

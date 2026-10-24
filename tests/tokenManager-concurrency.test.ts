@@ -89,7 +89,7 @@ describe('token manager serialization', () => {
     }
 
     expect(await tokenManager.getUser(created.token)).toMatchObject({
-      schemaVersion: 3,
+      schemaVersion: 4,
       timeRange: 'month',
       presentation: 'hybrid',
       lockScreenProfile: 'standard',

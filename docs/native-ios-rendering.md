@@ -41,8 +41,10 @@ without stretching circles or dropping days/events. Countdown counts its
 featured event as the first, with additional events beneath it. Event dates and
 the redundant quarter heading stay hidden.
 
-The shared layout solver fits the dot field and actual event rail together. It
-tries full-width normal rows, then snug rows, then two-column dense rows, keeping
+The shared layout solver fits the dot field and actual event rail together. In dot
+views, the rail is centered beneath and constrained to the grid's outer-ring envelope;
+other presentations retain the content-width rail. It tries normal rows, then snug
+rows, then two-column dense rows, keeping
 the largest even dot diameter that fits each candidate's height and the available
 width. Week/rolling dots stay within 112–124px, Month 96–108px, Quarter 56–72px and
 Year 30–32px. Axis gaps are bounded rather than spread-to-fill: a sparse Week stays

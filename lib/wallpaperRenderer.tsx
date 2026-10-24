@@ -464,11 +464,24 @@ function EventList({ model }: { model: WallpaperModel }): ReactElement {
   const overflow = layout.overflow;
 
   if (!model.events.length) {
-    return <EmptyEvents theme={model.theme} compact={layout.compact} />;
+    return (
+      <EmptyEvents
+        theme={model.theme}
+        compact={layout.compact}
+        railLeft={layout.railLeft}
+        railWidth={layout.railWidth}
+      />
+    );
   }
 
   return (
-    <div style={columnStyle}>
+    <div
+      style={{
+        ...columnStyle,
+        width: layout.railWidth,
+        marginLeft: layout.railLeft,
+      }}
+    >
       <div style={{ display: 'flex', flexDirection: 'column', gap: layout.rowGap }}>
         {chunk(visible, layout.columns).map((row) => (
           <div key={row[0].id} style={{ display: 'flex', gap: layout.columnGap }}>
@@ -707,14 +720,20 @@ function PeriodProgress({
 function EmptyEvents({
   theme,
   compact = false,
+  railLeft = 0,
+  railWidth = '100%',
 }: {
   theme: WallpaperTheme;
   compact?: boolean;
+  railLeft?: number;
+  railWidth?: number | string;
 }): ReactElement {
   return (
     <div
       style={{
         ...columnStyle,
+        width: railWidth,
+        marginLeft: railLeft,
         justifyContent: 'center',
         alignItems: compact ? 'flex-start' : 'center',
       }}

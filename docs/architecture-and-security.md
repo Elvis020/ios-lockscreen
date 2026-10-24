@@ -28,7 +28,9 @@ separately. The seven named presets map range/presentation only, so choosing a
 preset never resets the event count. Counts are integers 1–5, defaulting to 2 for
 new, legacy or invalid stored settings. Agenda and Minimal are no longer public
 views; saved versions normalize to Calendar without changing account keys or
-events. Minimal remains a color theme. Legacy `viewMode` remains accepted.
+events. The retired Minimal color theme normalizes to Default. Legacy `viewMode`
+remains accepted. If a legacy custom theme collides with a newly introduced built-in
+name, its colors are preserved under a deterministic `-custom` name.
 
 Per-user mutations use short-lived owner locks with atomic commit-time lease fencing. An expired lock holder therefore cannot overwrite a newer update from the dashboard, Telegram, or Google Calendar.
 
@@ -38,6 +40,10 @@ Per-user mutations use short-lived owner locks with atomic commit-time lease fen
 - Google refresh tokens are encrypted with AES-GCM before Redis storage.
 - OAuth state uses a short-lived, secure, HttpOnly, SameSite cookie.
 - Telegram link codes and OAuth state expire after ten minutes.
+- Telegram event drafts expire after fifteen minutes. The Mini App calendar verifies
+  signed Telegram launch data, checks freshness, and binds the verified user to the
+  active linked draft before accepting a date. Final event creation still requires a
+  separate confirmation in the bot chat.
 - Personalized wallpaper responses are private and not cached.
 - The public fallback wallpaper may use a one-hour CDN cache.
 - Errors returned to clients avoid exposing internal details.
@@ -77,14 +83,17 @@ of a particular phone's font, widget or crop behavior.
 
 Event dates remain stored for sorting, countdowns, and calendar markers but are not
 printed beside events. Each displayed event has a single name/countdown line and a
-thin, three-pixel progress track on the full-resolution image. Compact rows use
+thin, three-pixel progress track on the full-resolution image. In dot views, the
+entire rail follows the centered outer-ring grid envelope; other views keep the full
+content width. Compact rows use
 `Today`, `1d`, or `22d`; long names truncate without displacing the countdown. The
 large countdown display has no event timer line; additional Countdown events do.
 
 Every active presentation honors the same saved display count: 1–5 events, default
 2, for either clock profile. The layout reserves the actual rail height (at least
-76px for an empty state), rather than an unused fixed 204px slot. Lists use
-full-width rows when the available band allows, first tightening
+76px for an empty state), rather than an unused fixed 204px slot. Lists use the
+dot-grid envelope in dot views and full-width rows otherwise when the available band
+allows, first tightening
 76px rows/20px gaps to 68px rows/14px gaps if needed. Dense combinations then use
 two columns with 52px rows, a 28px gutter and the same thin timers. This preserves
 bounded dot sizes and ring separation while fitting the selected count. Countdown keeps its first event

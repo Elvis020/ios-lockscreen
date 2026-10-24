@@ -58,6 +58,9 @@ describe('Telegram command setup', () => {
     ];
 
     expect(TELEGRAM_COMMANDS.map(({ command }) => command)).toEqual(expectedCommands);
+    expect(
+      TELEGRAM_COMMANDS.find(({ command }) => command === 'add')?.description,
+    ).toContain('guided date choices');
     expect(new Set(expectedCommands).size).toBe(expectedCommands.length);
 
     for (const { command, description } of TELEGRAM_COMMANDS) {

@@ -53,7 +53,7 @@ Typing `/` in the bot chat will then show autocomplete for:
 /help
 /status
 /url
-/add YYYY-MM-DD Event name
+/add Event name
 /events
 /eventcount 1|2|3|4|5
 /delete NUMBER
@@ -88,11 +88,19 @@ Agenda and Minimal views have been removed. Saved accounts using either fall bac
 to Calendar without losing events or their wallpaper URL. The retired `minimal`
 color theme also falls back to `default` and cannot be recreated as a custom theme.
 
-`/theme` and `/theme list` send a compact visual contact sheet of up to nine available
-themes, followed by a two-column set of one-tap buttons. The preview is a static PNG:
+`/add` creates a 15-minute draft rather than saving immediately. It accepts natural
+phrases such as `Dentist tomorrow`, `Mum’s birthday 14 November`, and `Conference next
+Friday`, while the exact `/add YYYY-MM-DD Event name` form remains supported. Name-only
+entries offer Today, Tomorrow, Next Monday, or a compact Telegram calendar before a final
+Save event confirmation.
+
+`/theme` and `/theme list` show all eight built-in themes in a compact visual contact
+sheet and two-column selector. A Custom themes page provides the separately saved themes;
+neither page silently truncates entries. The preview is a static PNG:
 it shows only each theme's palette and sample calendar marks, not account, calendar,
 credential, or wallpaper-key data. If Telegram cannot deliver the PNG, the bot sends
-the same selector as text and buttons. No animated snow or rain is included.
+the same selector as text and buttons. No animated snow or rain is included because
+the generated iPhone wallpaper is a static image.
 
 Year uses a continuous twenty-two-column dot field with event timers; older saved
 Year/progress settings render the same way.
@@ -111,5 +119,7 @@ Custom theme names must begin with a letter and may contain lowercase letters, n
 - Relinking revokes the previous Telegram identity.
 - Telegram retries are handled idempotently.
 - Authorization is tied to the Telegram user ID rather than a shared chat.
+- The date-picker Mini App validates Telegram's signed launch data on the server,
+  checks its age, and matches the verified identity to the active linked draft.
 
 Read the official [Telegram Bot API documentation](https://core.telegram.org/bots/api) for webhook details.
