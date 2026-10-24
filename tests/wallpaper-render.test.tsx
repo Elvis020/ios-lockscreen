@@ -6,6 +6,7 @@ import {
   PRESENTATIONS,
   TIME_RANGES,
 } from '../lib/preferences';
+import { normalizeUserData } from '../lib/userSchema';
 import { buildWallpaperModel } from '../lib/wallpaperModel';
 import { getContinuousDotGridLayout, FIRST_DOT_TOP } from '../lib/wallpaperLayout';
 import {
@@ -364,6 +365,41 @@ describe('wallpaper renderer', () => {
           width === '100%' && textAlign === 'center' && justifyContent === 'center',
       ),
     ).toBe(true);
+  });
+
+  it('matches native event colors for a non-default accent and explicit category', () => {
+    const user = normalizeUserData(
+      {
+        token: 'owner',
+        name: 'Ada',
+        theme: 'frost',
+        timeRange: 'month',
+        presentation: 'calendar',
+        lockScreenProfile: 'standard',
+        timeZone: 'UTC',
+        events: [
+          { name: 'Today', date: '2026-10-24', category: 'general' },
+          { name: 'General', date: '2026-10-25', category: 'general' },
+          { name: 'Work', date: '2026-10-26', category: 'work' },
+        ],
+      },
+      'owner',
+    )!;
+    const model = buildWallpaperModel({ date: new Date('2026-10-24T12:00:00Z'), user });
+    const grid = getContinuousDotGridLayout(model);
+    const { styles } = inspectCanvas(WallpaperCanvas({ model }));
+
+    expect(styles).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          border: `${grid.eventRingWidth}px solid ${model.theme.text}`,
+        }),
+        expect.objectContaining({
+          border: `${grid.eventRingWidth}px solid ${model.theme.current}`,
+        }),
+        expect.objectContaining({ border: `${grid.eventRingWidth}px solid #5D7FA3` }),
+      ]),
+    );
   });
 
   it('removes month panels and begins the flat dots directly below the clock', () => {

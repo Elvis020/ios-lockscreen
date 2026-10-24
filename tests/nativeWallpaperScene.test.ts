@@ -447,6 +447,42 @@ describe('native wallpaper scene', () => {
     );
   });
 
+  it('uses the resolved accent for general markers while retaining explicit category colors', () => {
+    const user = normalizeUserData(
+      {
+        token: 'owner',
+        name: 'Ada',
+        theme: 'frost',
+        timeRange: 'month',
+        presentation: 'calendar',
+        lockScreenProfile: 'standard',
+        timeZone: 'UTC',
+        events: [
+          { name: 'Today', date: '2026-10-24', category: 'general' },
+          { name: 'General', date: '2026-10-25', category: 'general' },
+          { name: 'Work', date: '2026-10-26', category: 'work' },
+        ],
+      },
+      'owner',
+    )!;
+    const model = buildWallpaperModel({ date, user });
+    const scene = buildNativeWallpaperScene(model);
+    const grid = getContinuousDotGridLayout(model);
+    const outerDiameter = grid.size + 2 * (grid.eventRingGap + grid.eventRingWidth);
+
+    expect(
+      scene.commands.filter(
+        (command) => command.kind === 'circle' && command.diameter === outerDiameter,
+      ),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ fill: model.theme.text }),
+        expect.objectContaining({ fill: model.theme.current }),
+        expect.objectContaining({ fill: '#5D7FA3' }),
+      ]),
+    );
+  });
+
   it('draws regular and leap years as a single 22-column field without losing tracked markers', () => {
     for (const [year, days] of [
       [2026, 365],

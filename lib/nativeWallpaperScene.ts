@@ -182,7 +182,7 @@ function addDot(
   const y = Math.round(position.y);
 
   if (cell.event) {
-    const color = eventCategoryColor(category);
+    const color = eventCategoryColor(category, theme.current);
 
     if (ringStyle === 'double' || ringStyle === 'halo') {
       const offset =
@@ -458,7 +458,7 @@ function addEventRow(
       width: 4,
       height: 24,
       radius: 2,
-      fill: eventCategoryColor(event.category),
+      fill: eventCategoryColor(event.category, model.theme.current),
     });
   }
 
@@ -482,7 +482,7 @@ function addEventRow(
       height: countdownHeight,
     },
     event.daysLeft <= 1
-      ? eventCategoryColor(event.category)
+      ? eventCategoryColor(event.category, model.theme.current)
       : layout.compact
         ? model.theme.text
         : model.theme.subtext,
@@ -506,7 +506,7 @@ function addEventRow(
     scene.commands.push({
       ...timer,
       width: (width * event.progressPercent) / 100,
-      fill: eventCategoryColor(event.category),
+      fill: eventCategoryColor(event.category, model.theme.current),
     });
   }
 }

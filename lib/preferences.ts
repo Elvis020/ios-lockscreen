@@ -12,8 +12,15 @@ export const EVENT_CATEGORY_COLORS: Record<string, string> = {
   travel: '#A68155',
 };
 
-export function eventCategoryColor(category?: string): string {
-  return EVENT_CATEGORY_COLORS[category ?? 'general'] ?? EVENT_CATEGORY_COLORS.general;
+export function eventCategoryColor(
+  category: string | undefined,
+  themeAccent: string,
+): string {
+  if (!category || category === 'general') {
+    return themeAccent;
+  }
+
+  return EVENT_CATEGORY_COLORS[category ?? 'general'] ?? themeAccent;
 }
 export const EVENT_COUNTS = [1, 2, 3, 4, 5] as const;
 

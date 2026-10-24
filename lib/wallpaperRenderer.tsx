@@ -463,7 +463,7 @@ function CalendarDot({
         ? theme.passed
         : theme.future;
   const ringOffset = eventRingGap + eventRingWidth;
-  const color = eventCategoryColor(cell.category);
+  const color = eventCategoryColor(cell.category, theme.current);
 
   return (
     <div
@@ -617,7 +617,7 @@ function EventRow({
               width: 4,
               height: 24,
               borderRadius: 2,
-              backgroundColor: eventCategoryColor(event.category),
+              backgroundColor: eventCategoryColor(event.category, theme.current),
             }}
           />
         ) : null}
@@ -644,7 +644,7 @@ function EventRow({
             justifyContent: 'flex-end',
             color:
               event.daysLeft <= 1
-                ? eventCategoryColor(event.category)
+                ? eventCategoryColor(event.category, theme.current)
                 : emphasizeCountdown
                   ? theme.text
                   : theme.subtext,
@@ -689,7 +689,7 @@ function EventTimer({
           display: 'flex',
           width: `${event.progressPercent}%`,
           height: '100%',
-          backgroundColor: eventCategoryColor(event.category),
+          backgroundColor: eventCategoryColor(event.category, theme.current),
         }}
       />
     </div>
