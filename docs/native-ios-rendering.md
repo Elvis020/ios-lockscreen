@@ -8,6 +8,10 @@ PNG Shortcut as a fallback.
 ## What changes
 
 Vercel sends a small JSON scene instead of an image. [Scriptable](https://scriptable.app/)
+
+Living overlays and milestone rings are deterministic static frame commands generated
+for each wallpaper fetch; they are not live weather. The native Scriptable v1 protocol
+and existing Shortcut URL remain unchanged.
 draws that scene on the iPhone using its native system font and returns a PNG to
 Shortcuts. Shortcuts still applies the wallpaper. No Apple font file is copied into
 the project, downloaded, or hosted on Vercel.

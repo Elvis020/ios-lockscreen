@@ -161,6 +161,47 @@ describe('Telegram mutation idempotency', () => {
     expect(await redis.get('telegram:user:42')).toBe('owner');
     expect(await redis.get(doneKey)).toBe('done');
   });
+
+  it('atomically creates and saves a Studio draft with webhook completion', async () => {
+    await seedLinkedUser();
+    const { default: handler } = await import('../api/telegram/webhook');
+    const createDoneKey = 'telegram:update:done:504';
+
+    redis.failDirectSetKeys.add(createDoneKey);
+    expect((await handler(request(telegramUpdate(504, '/studio night')))).status).toBe(
+      200,
+    );
+
+    const draft = await redis.get<{
+      id: string;
+      revision: string;
+      theme: { id: string };
+      livingOverlay: string;
+    }>('telegram:studio:42');
+
+    expect(draft).toMatchObject({ theme: { id: 'night' }, livingOverlay: 'stars' });
+    expect(await redis.get(createDoneKey)).toBe('done');
+    expect(redis.directSetAttempts.get(createDoneKey)).toBeUndefined();
+
+    const saveDoneKey = 'telegram:update:done:505';
+
+    redis.failDirectSetKeys.add(saveDoneKey);
+    const save = callbackUpdate(505, `studio:${draft!.id}:${draft!.revision}:save`);
+
+    expect((await handler(request(save))).status).toBe(200);
+    expect((await handler(request(save))).status).toBe(200);
+
+    const user = await redis.get<{
+      theme: string;
+      livingOverlay: string;
+      customThemes: Array<{ id: string }>;
+    }>('user:owner');
+
+    expect(user).toMatchObject({ theme: 'night', livingOverlay: 'stars' });
+    expect(user?.customThemes.map(({ id }) => id)).toEqual(['night']);
+    expect(await redis.get(saveDoneKey)).toBe('done');
+    expect(redis.directSetAttempts.get(saveDoneKey)).toBeUndefined();
+  });
 });
 
 async function seedLinkedUser(events: unknown[] = []): Promise<void> {
@@ -199,6 +240,8 @@ function manualEvent(id: string, name: string) {
     date: '2026-11-01',
     source: 'manual',
     createdAt: '2026-10-23T00:00:00.000Z',
+    category: 'general',
+    recurrence: 'none',
   };
 }
 

@@ -14,6 +14,9 @@ import {
   type WallpaperTheme,
 } from './preferences';
 import type { UserData } from './userSchema';
+import { nextOccurrenceOnOrAfter } from './eventTimeline';
+import { resolveReadTimeAppearance } from './profileResolver';
+import type { LivingOverlay, MilestoneRingStyle } from './userSchema';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -25,6 +28,9 @@ export interface DisplayEvent {
   countdownLabel: string;
   progressPercent: number;
   source: 'manual' | 'google';
+  stableRef?: string;
+  category?: string;
+  focused?: boolean;
 }
 
 export interface WallpaperCell {
@@ -35,6 +41,7 @@ export interface WallpaperCell {
   current: boolean;
   weekend: boolean;
   event: boolean;
+  category?: string;
 }
 
 export interface WallpaperMonthGroup {
@@ -53,6 +60,9 @@ export interface WallpaperModel {
   cells: WallpaperCell[];
   monthGroups: WallpaperMonthGroup[];
   events: DisplayEvent[];
+  livingOverlay: LivingOverlay;
+  milestoneRingStyle: MilestoneRingStyle;
+  accountSeed: string;
 }
 
 export function buildWallpaperModel(options: {
@@ -68,22 +78,52 @@ export function buildWallpaperModel(options: {
   dayOverride?: number;
 }): WallpaperModel {
   const user = options.user;
-  const timeRange = user?.timeRange ?? options.timeRange ?? 'quarter';
-  const presentation = user?.presentation ?? options.presentation ?? 'calendar';
+  const appearance = user ? resolveReadTimeAppearance(user, options.date) : null;
+  const timeRange =
+    appearance?.timeRange ?? user?.timeRange ?? options.timeRange ?? 'quarter';
+  const presentation =
+    appearance?.presentation ?? user?.presentation ?? options.presentation ?? 'calendar';
   const lockScreenProfile =
-    user?.lockScreenProfile ?? options.lockScreenProfile ?? 'standard';
+    appearance?.lockScreenProfile ??
+    user?.lockScreenProfile ??
+    options.lockScreenProfile ??
+    'standard';
   const timeZone = user?.timeZone ?? options.timeZone ?? 'UTC';
-  const themeId = user?.theme ?? options.themeId ?? 'default';
+  const themeId = appearance?.theme ?? user?.theme ?? options.themeId ?? 'default';
   const period = getPeriodInfo(options.date, timeRange, timeZone);
   const effectiveDay = clampDay(options.dayOverride, period.currentDay, period.totalDays);
   const currentDate = dateAtPeriodDay(period.startDate, effectiveDay);
-  const selectedGoogle = new Set(user?.selectedEventIds ?? []);
   const sourceEvents = user
     ? [
-        ...user.events.map((event) => ({ ...event, source: 'manual' as const })),
-        ...user.cachedCalEvents
-          .filter(({ id }) => selectedGoogle.has(id))
-          .map((event) => ({ ...event, source: 'google' as const })),
+        ...user.events.flatMap((event, index) => {
+          const date = nextOccurrenceOnOrAfter(event, currentDate);
+
+          return date
+            ? [
+                {
+                  ...event,
+                  date,
+                  stableRef: `M${index + 1}`,
+                  source: 'manual' as const,
+                  category: event.category ?? 'general',
+                },
+              ]
+            : [];
+        }),
+        ...user.selectedEventIds.flatMap((id, index) => {
+          const event = user.cachedCalEvents.find((candidate) => candidate.id === id);
+
+          return event && event.date >= currentDate
+            ? [
+                {
+                  ...event,
+                  stableRef: `G${index + 1}`,
+                  source: 'google' as const,
+                  category: user.googleCategoryOverrides?.[id] ?? 'general',
+                },
+              ]
+            : [];
+        }),
       ]
     : (options.publicEvents ?? []).map((event, index) => ({
         ...event,
@@ -105,6 +145,9 @@ export function buildWallpaperModel(options: {
           Math.min(100, Math.max(0, (effectiveDay / eventDay) * 100)),
         ),
         source: event.source,
+        stableRef: 'stableRef' in event ? event.stableRef : undefined,
+        category: 'category' in event ? event.category : 'general',
+        focused: user?.focusEventId === event.id,
       };
     })
     .filter(
@@ -112,13 +155,27 @@ export function buildWallpaperModel(options: {
         daysLeft >= 0 && (presentation !== 'agenda' || date <= period.endDate),
     )
     .sort((left, right) => {
+      if (user?.focusEventId === left.id && user?.focusEventId !== right.id) return -1;
+      if (user?.focusEventId === right.id && user?.focusEventId !== left.id) return 1;
       const dateOrder = left.daysLeft - right.daysLeft;
 
       return dateOrder || left.name.localeCompare(right.name);
     });
   const eventDates = new Set(events.map(({ date }) => date));
+  // Rows are focus-first, then deterministic date/name order. Keep the first marker
+  // category for a civil day instead of letting a later map entry overwrite it.
+  const eventCategories = new Map<string, string>();
+
+  events.forEach(({ date, category }) => {
+    if (!eventCategories.has(date)) eventCategories.set(date, category ?? 'general');
+  });
   const cells = Array.from({ length: period.totalDays }, (_, index) =>
-    buildCell(dateAtPeriodDay(period.startDate, index + 1), currentDate, eventDates),
+    buildCell(
+      dateAtPeriodDay(period.startDate, index + 1),
+      currentDate,
+      eventDates,
+      eventCategories,
+    ),
   );
   const effectivePeriod = {
     ...period,
@@ -135,12 +192,23 @@ export function buildWallpaperModel(options: {
     timeRange,
     presentation,
     lockScreenProfile,
-    eventCount: isEventCount(user?.eventCount ?? options.eventCount)
-      ? (user?.eventCount ?? options.eventCount)!
+    eventCount: isEventCount(
+      appearance?.eventCount ?? user?.eventCount ?? options.eventCount,
+    )
+      ? (appearance?.eventCount ?? user?.eventCount ?? options.eventCount)!
       : DEFAULT_EVENT_COUNT,
     cells,
-    monthGroups: buildMonthGroups(effectivePeriod, currentDate, eventDates),
+    monthGroups: buildMonthGroups(
+      effectivePeriod,
+      currentDate,
+      eventDates,
+      eventCategories,
+    ),
     events,
+    livingOverlay: appearance?.livingOverlay ?? user?.livingOverlay ?? 'none',
+    milestoneRingStyle:
+      appearance?.milestoneRingStyle ?? user?.milestoneRingStyle ?? 'single',
+    accountSeed: user?.token ?? 'public',
   };
 }
 
@@ -160,6 +228,7 @@ function buildMonthGroups(
   period: PeriodInfo,
   currentDate: string,
   eventDates: Set<string>,
+  eventCategories: Map<string, string>,
 ): WallpaperMonthGroup[] {
   const start = parseDate(period.startDate);
   const end = parseDate(period.endDate);
@@ -179,7 +248,7 @@ function buildMonthGroups(
     for (let day = 1; day <= daysInMonth; day += 1) {
       const date = formatDate(new Date(Date.UTC(year, month, day)));
 
-      cells.push(buildCell(date, currentDate, eventDates));
+      cells.push(buildCell(date, currentDate, eventDates, eventCategories));
     }
 
     while (cells.length < 42) {
@@ -204,6 +273,7 @@ function buildCell(
   date: string,
   currentDate: string,
   eventDates: Set<string>,
+  eventCategories: Map<string, string>,
 ): WallpaperCell {
   const parsed = parseDate(date);
 
@@ -218,6 +288,7 @@ function buildCell(
     current: date === currentDate,
     weekend: isWeekendDate(date),
     event: eventDates.has(date),
+    category: eventCategories.get(date),
   };
 }
 

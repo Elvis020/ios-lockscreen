@@ -1,6 +1,7 @@
 import { ImageResponse } from '@vercel/og';
 import type { CSSProperties, ReactElement } from 'react';
-import type { WallpaperTheme } from './preferences';
+import { eventCategoryColor, type WallpaperTheme } from './preferences';
+import { getLivingThemePrimitives } from './livingThemes';
 import {
   CONTENT_LEFT,
   CONTENT_RIGHT,
@@ -76,6 +77,7 @@ export function WallpaperCanvas({
         fontFamily: 'Inter, system-ui, sans-serif',
       }}
     >
+      <LivingOverlay model={model} />
       <div
         style={{
           position: 'absolute',
@@ -109,6 +111,36 @@ export function WallpaperCanvas({
         )}
       </div>
       {options.mockIosOverlay ? <MockIosOverlay model={model} /> : null}
+    </div>
+  );
+}
+
+function LivingOverlay({ model }: { model: WallpaperModel }): ReactElement | null {
+  const primitives = getLivingThemePrimitives({
+    overlay: model.livingOverlay,
+    profile: model.lockScreenProfile,
+    date: model.period.currentDate,
+    accountSeed: model.accountSeed,
+  });
+
+  if (!primitives.length) return null;
+
+  return (
+    <div style={{ position: 'absolute', inset: 0, display: 'flex', overflow: 'hidden' }}>
+      {primitives.map((primitive, index) => (
+        <div
+          key={index}
+          style={{
+            position: 'absolute',
+            left: primitive.x,
+            top: primitive.y,
+            width: primitive.kind === 'circle' ? primitive.diameter : primitive.width,
+            height: primitive.kind === 'circle' ? primitive.diameter : primitive.height,
+            borderRadius: primitive.kind === 'circle' ? 999 : primitive.radius,
+            backgroundColor: primitive.fill,
+          }}
+        />
+      ))}
     </div>
   );
 }
@@ -400,6 +432,7 @@ function CalendarVisual({ model }: { model: WallpaperModel }): ReactElement {
             size={grid.size}
             eventRingGap={grid.eventRingGap}
             eventRingWidth={grid.eventRingWidth}
+            ringStyle={model.milestoneRingStyle}
           />
         </div>
       ))}
@@ -413,12 +446,14 @@ function CalendarDot({
   size,
   eventRingGap,
   eventRingWidth,
+  ringStyle,
 }: {
   cell: WallpaperCell;
   theme: WallpaperTheme;
   size: number;
   eventRingGap: number;
   eventRingWidth: number;
+  ringStyle: WallpaperModel['milestoneRingStyle'];
 }): ReactElement {
   const fill = cell.current
     ? theme.current
@@ -428,6 +463,7 @@ function CalendarDot({
         ? theme.passed
         : theme.future;
   const ringOffset = eventRingGap + eventRingWidth;
+  const color = eventCategoryColor(cell.category);
 
   return (
     <div
@@ -449,7 +485,21 @@ function CalendarDot({
             width: size + ringOffset * 2,
             height: size + ringOffset * 2,
             display: 'flex',
-            border: `${eventRingWidth}px solid ${cell.current ? theme.text : theme.current}`,
+            border: `${eventRingWidth}px solid ${cell.current ? theme.text : color}`,
+            borderRadius: 999,
+          }}
+        />
+      ) : null}
+      {cell.event && ringStyle !== 'single' ? (
+        <div
+          style={{
+            position: 'absolute',
+            top: -(ringOffset + (ringStyle === 'halo' ? 10 : 7)),
+            left: -(ringOffset + (ringStyle === 'halo' ? 10 : 7)),
+            width: size + (ringOffset + (ringStyle === 'halo' ? 10 : 7)) * 2,
+            height: size + (ringOffset + (ringStyle === 'halo' ? 10 : 7)) * 2,
+            display: 'flex',
+            border: `${ringStyle === 'halo' ? 2 : eventRingWidth}px solid ${ringStyle === 'halo' ? theme.future : color}`,
             borderRadius: 999,
           }}
         />
@@ -493,6 +543,7 @@ function EventList({ model }: { model: WallpaperModel }): ReactElement {
                 <EventRow
                   event={event}
                   theme={model.theme}
+                  focused={event.focused}
                   compact={layout.compact}
                   height={layout.rowHeight}
                   emphasizeCountdown={layout.compact}
@@ -523,6 +574,7 @@ function EventList({ model }: { model: WallpaperModel }): ReactElement {
 function EventRow({
   event,
   theme,
+  focused = false,
   compact,
   height,
   emphasizeCountdown = false,
@@ -530,6 +582,7 @@ function EventRow({
 }: {
   event: DisplayEvent;
   theme: WallpaperTheme;
+  focused?: boolean;
   compact: boolean;
   height: number;
   emphasizeCountdown?: boolean;
@@ -542,6 +595,7 @@ function EventRow({
         width: '100%',
         flexShrink: 0,
         display: 'flex',
+        position: 'relative',
         flexDirection: 'column',
         justifyContent: 'center',
       }}
@@ -554,6 +608,19 @@ function EventRow({
           gap: layout?.columns === 2 ? 16 : 28,
         }}
       >
+        {focused ? (
+          <div
+            style={{
+              display: 'flex',
+              position: 'absolute',
+              left: -10,
+              width: 4,
+              height: 24,
+              borderRadius: 2,
+              backgroundColor: eventCategoryColor(event.category),
+            }}
+          />
+        ) : null}
         <div
           style={{
             display: 'flex',
@@ -577,7 +644,7 @@ function EventRow({
             justifyContent: 'flex-end',
             color:
               event.daysLeft <= 1
-                ? theme.current
+                ? eventCategoryColor(event.category)
                 : emphasizeCountdown
                   ? theme.text
                   : theme.subtext,
@@ -622,7 +689,7 @@ function EventTimer({
           display: 'flex',
           width: `${event.progressPercent}%`,
           height: '100%',
-          backgroundColor: theme.current,
+          backgroundColor: eventCategoryColor(event.category),
         }}
       />
     </div>

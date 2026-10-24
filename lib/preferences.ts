@@ -4,6 +4,17 @@ export const PRESENTATIONS = ['calendar', 'countdown', 'progress', 'hybrid'] as 
 export const LEGACY_PRESENTATIONS = ['agenda', 'minimal'] as const;
 export const LOCK_SCREEN_PROFILES = ['standard', 'large-clock'] as const;
 export const DEFAULT_EVENT_COUNT = 2;
+export const EVENT_CATEGORY_COLORS: Record<string, string> = {
+  general: '#8C8C8C',
+  work: '#5D7FA3',
+  personal: '#8B6B8F',
+  health: '#5F907B',
+  travel: '#A68155',
+};
+
+export function eventCategoryColor(category?: string): string {
+  return EVENT_CATEGORY_COLORS[category ?? 'general'] ?? EVENT_CATEGORY_COLORS.general;
+}
 export const EVENT_COUNTS = [1, 2, 3, 4, 5] as const;
 
 export type ViewMode = (typeof VIEW_MODES)[number];

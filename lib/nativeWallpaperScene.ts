@@ -1,4 +1,5 @@
-import type { WallpaperTheme } from './preferences';
+import { eventCategoryColor, type WallpaperTheme } from './preferences';
+import { getLivingThemePrimitives } from './livingThemes';
 import {
   CONTENT_LEFT,
   CONTENT_RIGHT,
@@ -77,6 +78,15 @@ export function buildNativeWallpaperScene(
   };
   const copy = getWallpaperHeaderCopy(model, title);
 
+  scene.commands.push(
+    ...getLivingThemePrimitives({
+      overlay: model.livingOverlay,
+      profile: model.lockScreenProfile,
+      date: model.period.currentDate,
+      accountSeed: model.accountSeed,
+    }).map((primitive) => primitive),
+  );
+
   if (copy.title) {
     addText(
       scene,
@@ -147,6 +157,8 @@ function addCalendar(
       scene,
       cell,
       model.theme,
+      model.milestoneRingStyle,
+      cell.category,
       {
         x: CONTENT_LEFT + position.x,
         y: top + position.y,
@@ -160,6 +172,8 @@ function addDot(
   scene: NativeWallpaperScene,
   cell: WallpaperCell,
   theme: WallpaperTheme,
+  ringStyle: WallpaperModel['milestoneRingStyle'],
+  category: string | undefined,
   position: { x: number; y: number },
   geometry: { size: number; eventRingGap: number; eventRingWidth: number },
 ): void {
@@ -168,10 +182,34 @@ function addDot(
   const y = Math.round(position.y);
 
   if (cell.event) {
+    const color = eventCategoryColor(category);
+
+    if (ringStyle === 'double' || ringStyle === 'halo') {
+      const offset =
+        geometry.eventRingGap + geometry.eventRingWidth + (ringStyle === 'halo' ? 10 : 7);
+      const outerRingWidth = ringStyle === 'halo' ? 2 : geometry.eventRingWidth;
+
+      // Paint the outer ring first, then carve its center before the inner ring.
+      scene.commands.push({
+        kind: 'circle',
+        x: x - offset,
+        y: y - offset,
+        diameter: geometry.size + offset * 2,
+        fill: ringStyle === 'halo' ? theme.future : color,
+      });
+      scene.commands.push({
+        kind: 'circle',
+        x: x - offset + outerRingWidth,
+        y: y - offset + outerRingWidth,
+        diameter: geometry.size + offset * 2 - outerRingWidth * 2,
+        fill: theme.background,
+      });
+    }
+
     for (const [offset, fill] of [
       [
         geometry.eventRingGap + geometry.eventRingWidth,
-        cell.current ? theme.text : theme.current,
+        cell.current ? theme.text : color,
       ],
       [geometry.eventRingGap, theme.background],
     ] as const) {
@@ -412,6 +450,18 @@ function addEventRow(
   const nameGap = layout.columns === 2 ? 16 : 28;
   const textTop = top + (layout.rowHeight - (nameHeight + gap + 3)) / 2;
 
+  if (event.focused) {
+    scene.commands.push({
+      kind: 'roundRect',
+      x: left - 10,
+      y: textTop,
+      width: 4,
+      height: 24,
+      radius: 2,
+      fill: eventCategoryColor(event.category),
+    });
+  }
+
   addText(
     scene,
     event.name,
@@ -432,7 +482,7 @@ function addEventRow(
       height: countdownHeight,
     },
     event.daysLeft <= 1
-      ? model.theme.current
+      ? eventCategoryColor(event.category)
       : layout.compact
         ? model.theme.text
         : model.theme.subtext,
@@ -456,7 +506,7 @@ function addEventRow(
     scene.commands.push({
       ...timer,
       width: (width * event.progressPercent) / 100,
-      fill: model.theme.current,
+      fill: eventCategoryColor(event.category),
     });
   }
 }

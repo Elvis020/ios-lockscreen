@@ -20,6 +20,13 @@ import {
 } from '../lib/preferences';
 import { ensureWallpaperKey, updatePreferences } from '../lib/tokenManager';
 import { isValidTimeZone } from '../lib/validation';
+import { resolveReadTimeAppearance } from '../lib/profileResolver';
+import type {
+  AutomaticProfiles,
+  LivingOverlay,
+  MilestoneRingStyle,
+} from '../lib/userSchema';
+import { normalizeUserData } from '../lib/userSchema';
 
 export const config = {
   runtime: 'edge',
@@ -61,6 +68,14 @@ export default async function handler(req: Request) {
         wallpaperKey: result.wallpaperKey,
         wallpaperUrl: wallpaperUrl(req, result.wallpaperKey),
         telegramLinked: Boolean(result.user.telegram),
+        focusEventId: result.user.focusEventId,
+        livingOverlay: result.user.livingOverlay,
+        milestoneRingStyle: result.user.milestoneRingStyle,
+        automaticProfiles: result.user.automaticProfiles,
+        resolvedAppearance: resolveReadTimeAppearance(result.user),
+        sharedCountdowns: result.user.sharedCountdowns?.map(
+          ({ id, eventId, createdAt }) => ({ id, eventId, createdAt }),
+        ),
       });
     }
 
@@ -79,6 +94,10 @@ export default async function handler(req: Request) {
         lockScreenProfile?: LockScreenProfile;
         timeZone?: string;
         eventCount?: number;
+        focusEventId?: string;
+        livingOverlay?: LivingOverlay;
+        milestoneRingStyle?: MilestoneRingStyle;
+        automaticProfiles?: AutomaticProfiles;
       } = {};
 
       if (body.preset !== undefined) {
@@ -151,6 +170,45 @@ export default async function handler(req: Request) {
         preferences.eventCount = body.eventCount;
       }
 
+      if (body.focusEventId !== undefined) {
+        if (typeof body.focusEventId !== 'string')
+          return jsonResponse({ error: 'Focus event must be an event ID' }, 400);
+        preferences.focusEventId = body.focusEventId;
+      }
+
+      if (body.livingOverlay !== undefined) {
+        if (
+          !['none', 'snow', 'rain', 'stars', 'haze', 'sunset', 'seasonal'].includes(
+            String(body.livingOverlay),
+          )
+        )
+          return jsonResponse({ error: 'Unknown living overlay' }, 400);
+        preferences.livingOverlay = body.livingOverlay as LivingOverlay;
+      }
+
+      if (body.milestoneRingStyle !== undefined) {
+        if (!['single', 'double', 'halo'].includes(String(body.milestoneRingStyle)))
+          return jsonResponse({ error: 'Unknown milestone ring style' }, 400);
+        preferences.milestoneRingStyle = body.milestoneRingStyle as MilestoneRingStyle;
+      }
+
+      if (body.automaticProfiles !== undefined) {
+        if (
+          !body.automaticProfiles ||
+          typeof body.automaticProfiles !== 'object' ||
+          Array.isArray(body.automaticProfiles)
+        )
+          return jsonResponse({ error: 'Invalid automatic profiles' }, 400);
+        const normalized = normalizeUserData(
+          { ...result.user, automaticProfiles: body.automaticProfiles },
+          token,
+        );
+
+        if (!normalized)
+          return jsonResponse({ error: 'Invalid automatic profiles' }, 400);
+        preferences.automaticProfiles = normalized.automaticProfiles;
+      }
+
       const user = await updatePreferences(token, preferences);
 
       return jsonResponse({
@@ -162,6 +220,10 @@ export default async function handler(req: Request) {
         preset: user ? findWallpaperPreset(user.timeRange, user.presentation) : null,
         viewMode: user?.timeRange,
         timeZone: user?.timeZone,
+        focusEventId: user?.focusEventId,
+        livingOverlay: user?.livingOverlay,
+        milestoneRingStyle: user?.milestoneRingStyle,
+        automaticProfiles: user?.automaticProfiles,
         wallpaperUrl: wallpaperUrl(req, result.wallpaperKey),
       });
     }

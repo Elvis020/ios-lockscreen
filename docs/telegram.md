@@ -55,6 +55,11 @@ Typing `/` in the bot chat will then show autocomplete for:
 /url
 /add Event name
 /events
+/today
+/week
+/focus M1|G1|off
+/repeat M1 off|weekly|monthly|yearly
+/category M1|G1 general|work|personal|health|travel
 /edit
 /edit NUMBER
 /eventcount 1|2|3|4|5
@@ -68,6 +73,15 @@ Typing `/` in the bot chat will then show autocomplete for:
 /theme NAME
 /theme custom add name #BACKGROUND #PASSED #WEEKEND #CURRENT #FUTURE
 /theme custom delete name
+/living none|snow|rain|stars|haze|sunset|seasonal
+/rings single|double|halo
+/studio
+/studio calm|warm|focus|night|fresh
+/studio color #RRGGBB name
+/autoprofile status|on|off|save day|evening|night
+/share M1|G1
+/shares
+/unshare NUMBER
 /sync
 ```
 
@@ -109,7 +123,12 @@ neither page silently truncates entries. The preview is a static PNG:
 it shows only each theme's palette and sample calendar marks, not account, calendar,
 credential, or wallpaper-key data. If Telegram cannot deliver the PNG, the bot sends
 the same selector as text and buttons. No animated snow or rain is included because
-the generated iPhone wallpaper is a static image.
+the generated iPhone wallpaper is a static image. Living overlays are deterministic static
+marks per fetch, not a live-weather service and do not change the native Shortcut protocol.
+
+`/studio` opens one-tap mood buttons. Calm, Warm, Focus, Night, and Fresh each show the
+actual palette before it is saved and pair it with a suitable static living overlay. The
+explicit mood and custom-color forms remain available for people who prefer typed commands.
 
 Year uses a continuous twenty-two-column dot field with event timers; older saved
 Year/progress settings render the same way.

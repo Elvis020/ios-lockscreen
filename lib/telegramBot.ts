@@ -15,6 +15,7 @@ import {
 } from './preferences';
 import { createThemePreviewImageResponse } from './themePreviewRenderer';
 import { getRedis } from './redis';
+import { resolveReadTimeAppearance } from './profileResolver';
 import { deleteRedisKeyIfValue } from './redisLock';
 import {
   addCustomTheme,
@@ -26,6 +27,11 @@ import {
   updatePreferences,
   saveTelegramDraftEvent,
   saveTelegramEditDraft,
+  createSharedCountdown,
+  revokeSharedCountdown,
+  setEventCategory,
+  setFocusEvent,
+  setManualEventRecurrence,
   type MutationCompletion,
 } from './tokenManager';
 import {
@@ -49,6 +55,21 @@ import {
   isValidTimeZone,
   normalizeEventName,
 } from './validation';
+import { buildEventTimeline } from './eventTimeline';
+import type { UserData } from './userSchema';
+import {
+  createStudioDraft,
+  finalizeStudioDraft,
+  getStudioDraft,
+  getStudioOutcome,
+  type TelegramStudioDraft,
+} from './telegramStudioDrafts';
+import {
+  createColorTheme,
+  createMoodTheme,
+  isStudioMood,
+  type StudioMood,
+} from './studioThemes';
 
 const WALLPAPER_REFRESH_NOTE = 'Changes appear on the next iOS wallpaper refresh.';
 
@@ -387,7 +408,150 @@ async function processTelegramCallback(
     return processEventCallback(callback, origin, completion);
   }
 
+  if (callback.data?.startsWith('studio:')) {
+    return processStudioCallback(callback, completion);
+  }
+
+  if (callback.data?.startsWith('studio-mood:')) {
+    return processStudioMoodCallback(callback, origin, completion);
+  }
+
   return processThemeCallback(callback, completion);
+}
+
+async function processStudioMoodCallback(
+  callback: NonNullable<TelegramUpdate['callback_query']>,
+  origin: string,
+  completion?: MutationCompletion,
+): Promise<TelegramProcessingResult> {
+  const mood = callback.data?.slice('studio-mood:'.length);
+  const userId = callback.from?.id;
+  const chatId = callback.message?.chat?.id;
+  let acknowledgement = 'This mood is not available.';
+
+  try {
+    if (
+      callback.message?.chat?.type !== 'private' ||
+      userId === undefined ||
+      chatId === undefined ||
+      !isStudioMood(mood)
+    ) {
+      return { completionCommitted: false };
+    }
+
+    const redis = getRedis();
+    const telegramUserId = String(userId);
+    const chat = String(chatId);
+    const token = await redis.get<string>(`telegram:user:${telegramUserId}`);
+    const user = token ? await getUser(token) : null;
+
+    if (
+      !token ||
+      !user ||
+      user.telegram?.userId !== telegramUserId ||
+      user.telegram.chatId !== chat
+    ) {
+      acknowledgement = 'Link Telegram in the dashboard first.';
+
+      return { completionCommitted: false };
+    }
+
+    const result = await runLinkedTelegramCommand(
+      token,
+      '/studio',
+      [mood],
+      origin,
+      completion,
+      { userId: telegramUserId, chatId: chat, timeZone: user.timeZone },
+    );
+
+    if (result.themeSelector) {
+      await sendTelegramThemeSelector(chat, result.reply, result.themeSelector);
+    } else {
+      await sendTelegramReply(chat, result.reply);
+    }
+
+    acknowledgement = `${mood[0].toUpperCase()}${mood.slice(1)} preview ready.`;
+
+    return { completionCommitted: result.completionCommitted };
+  } finally {
+    if (callback.id) await answerTelegramCallback(callback.id, acknowledgement);
+  }
+}
+
+async function processStudioCallback(
+  callback: NonNullable<TelegramUpdate['callback_query']>,
+  completion?: MutationCompletion,
+): Promise<TelegramProcessingResult> {
+  const match = callback.data?.match(
+    /^studio:([a-z0-9]{16}):([a-z0-9]{10}):(save|cancel)$/,
+  );
+  const userId = callback.from?.id;
+  const chatId = callback.message?.chat?.id;
+  let acknowledgement = 'Studio draft expired.';
+
+  try {
+    if (
+      !match ||
+      callback.message?.chat?.type !== 'private' ||
+      userId === undefined ||
+      chatId === undefined
+    )
+      return { completionCommitted: false };
+    const telegramUserId = String(userId);
+    const chat = String(chatId);
+    const draft = await getStudioDraft(telegramUserId);
+
+    if (
+      !draft ||
+      draft.id !== match[1] ||
+      draft.revision !== match[2] ||
+      draft.chatId !== chat
+    ) {
+      const outcome = await getStudioOutcome(telegramUserId, chat, match[1], match[2]);
+
+      if (outcome) {
+        acknowledgement = outcome === 'save' ? 'Already saved.' : 'Already cancelled.';
+      }
+
+      return { completionCommitted: false };
+    }
+    if (match[3] === 'cancel') {
+      const outcome = await finalizeStudioDraft(draft, 'cancel', completion);
+
+      if (outcome === 'stale') return { completionCommitted: false };
+      acknowledgement = outcome === 'save' ? 'Already saved.' : 'Studio draft cancelled.';
+
+      if (outcome === 'save') return { completionCommitted: Boolean(completion) };
+      await sendTelegramReply(
+        chat,
+        htmlReply('<b>Studio draft cancelled</b>\nNothing was saved.'),
+      );
+
+      return { completionCommitted: Boolean(completion) };
+    }
+    const outcome = await finalizeStudioDraft(draft, 'save', completion);
+
+    if (outcome === 'stale') return { completionCommitted: false };
+
+    if (outcome === 'cancel') {
+      acknowledgement = 'Already cancelled.';
+
+      return { completionCommitted: Boolean(completion) };
+    }
+
+    acknowledgement = 'Theme saved.';
+    await sendTelegramReply(
+      chat,
+      htmlReply(
+        `✓ <b>Studio theme saved</b>\n${escapeTelegramHtml(draft.theme.id)}\n${WALLPAPER_REFRESH_NOTE}`,
+      ),
+    );
+
+    return { completionCommitted: Boolean(completion) };
+  } finally {
+    if (callback.id) await answerTelegramCallback(callback.id, acknowledgement);
+  }
 }
 
 async function processEditMenuCallback(
@@ -899,6 +1063,7 @@ async function runLinkedTelegramCommand(
         completionCommitted: false,
       };
     }
+    const appearance = resolveReadTimeAppearance(result.user);
 
     return {
       reply: {
@@ -906,11 +1071,13 @@ async function runLinkedTelegramCommand(
           [
             '<b>Wallpaper status</b>',
             '',
-            `Range: <b>${escapeTelegramHtml(result.user.timeRange)}</b>`,
-            `Layout: <b>${escapeTelegramHtml(result.user.presentation)}</b>`,
-            `Lock-screen fit: <b>${escapeTelegramHtml(result.user.lockScreenProfile)}</b>`,
-            `Events shown: <b>${result.user.eventCount}</b>`,
-            `Theme: <b>${escapeTelegramHtml(result.user.theme)}</b>`,
+            `Range: <b>${escapeTelegramHtml(appearance.timeRange)}</b>`,
+            `Layout: <b>${escapeTelegramHtml(appearance.presentation)}</b>`,
+            `Lock-screen fit: <b>${escapeTelegramHtml(appearance.lockScreenProfile)}</b>`,
+            `Events shown: <b>${appearance.eventCount}</b>`,
+            `Theme now: <b>${escapeTelegramHtml(appearance.theme)}</b>`,
+            `Living: <b>${escapeTelegramHtml(appearance.livingOverlay)}</b> · Rings: <b>${escapeTelegramHtml(appearance.milestoneRingStyle)}</b>`,
+            `Auto profiles: <b>${result.user.automaticProfiles?.enabled ? 'on' : 'off'}</b> · active: <b>${escapeTelegramHtml(appearance.slot ?? 'base')}</b>`,
             `Time zone: <b>${escapeTelegramHtml(result.user.timeZone)}</b>`,
             `Events: <b>${result.user.events.length} manual</b> · <b>${result.user.cachedCalEvents.length} Google cached</b>`,
             '',
@@ -985,7 +1152,7 @@ async function runLinkedTelegramCommand(
   if (command === '/events') {
     const user = await getUser(token);
 
-    if (!user?.events.length) {
+    if (!user?.events.length && !user?.selectedEventIds.length) {
       return {
         reply: htmlReply(
           ['<b>No manual events</b>', 'Add one with <code>/add Event name</code>.'].join(
@@ -999,17 +1166,410 @@ async function runLinkedTelegramCommand(
     return {
       reply: htmlReply(
         [
-          '<b>Manual events</b>',
+          '<b>Tracked events</b>',
           '',
           ...user.events.map(
             (event, index) =>
-              `${index + 1}. <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)}`,
+              `M${index + 1}. <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)} <i>${escapeTelegramHtml(event.category ?? 'general')}</i>${event.recurrence && event.recurrence !== 'none' ? ` · ${event.recurrence}` : ''}`,
+          ),
+          ...selectedGoogleEvents(user).map(
+            (event, index) =>
+              `G${index + 1}. <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)} <i>${escapeTelegramHtml(user.googleCategoryOverrides?.[event.id] ?? 'general')}</i>`,
           ),
           '',
           'Edit one with <code>/edit</code> or delete one with <code>/delete NUMBER</code>.',
         ].join('\n'),
       ),
       completionCommitted: false,
+    };
+  }
+
+  if (command === '/today' || command === '/week') {
+    const user = await getUser(token);
+
+    if (!user) throw new Error('Linked account no longer exists');
+    const start = localDate(user.timeZone);
+    const endDate = new Date(`${start}T00:00:00Z`);
+
+    endDate.setUTCDate(endDate.getUTCDate() + (command === '/week' ? 6 : 0));
+    const events = buildEventTimeline(
+      user.events,
+      selectedGoogleEvents(user).map((event) => ({
+        ...event,
+        category: user.googleCategoryOverrides?.[event.id] ?? 'general',
+      })),
+      user.selectedEventIds,
+      start,
+      endDate.toISOString().slice(0, 10),
+    );
+
+    return {
+      reply: htmlReply(
+        [
+          `<b>${command === '/today' ? 'Today' : 'This week'}</b>`,
+          '',
+          ...(events.length
+            ? events.map(
+                (event) =>
+                  `${event.stableRef} · <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)}`,
+              )
+            : ['No tracked events.']),
+        ].join('\n'),
+      ),
+      completionCommitted: false,
+    };
+  }
+
+  if (command === '/focus') {
+    const user = await getUser(token);
+    const ref = args[0]?.toUpperCase();
+
+    if (ref === 'OFF') {
+      if (!user)
+        return {
+          reply: usageReply('Choose a focus event', '/focus M1|G1|off'),
+          completionCommitted: false,
+        };
+      await setFocusEvent(token, undefined, completion);
+
+      return {
+        reply: htmlReply(`✓ <b>Focus cleared</b>\n${WALLPAPER_REFRESH_NOTE}`),
+        completionCommitted: Boolean(completion),
+      };
+    }
+    const match = ref?.match(/^([MG])(\d+)$/);
+
+    if (!user || !match)
+      return {
+        reply: usageReply('Choose a focus event', '/focus M1|G1|off'),
+        completionCommitted: false,
+      };
+    const source = match[1] === 'M' ? user.events : selectedGoogleEvents(user);
+    const event = source[Number(match[2]) - 1];
+
+    if (!event)
+      return {
+        reply: usageReply('Choose a focus event', '/focus M1|G1|off'),
+        completionCommitted: false,
+      };
+    await setFocusEvent(token, event.id, completion);
+
+    return {
+      reply: htmlReply(
+        `✓ <b>Focus event set</b>\n${escapeTelegramHtml(event.name)}\n${WALLPAPER_REFRESH_NOTE}`,
+      ),
+      completionCommitted: Boolean(completion),
+    };
+  }
+
+  if (command === '/repeat' || command === '/category') {
+    const user = await getUser(token);
+    const match = args[0]?.toUpperCase().match(/^([MG])(\d+)$/);
+    const value = args[1]?.toLowerCase();
+    const allowed =
+      command === '/repeat'
+        ? ['off', 'weekly', 'monthly', 'yearly']
+        : ['general', 'work', 'personal', 'health', 'travel'];
+
+    if (!user || !match || !value || !allowed.includes(value)) {
+      return {
+        reply: usageReply(
+          command === '/repeat' ? 'Set recurrence' : 'Set category',
+          command === '/repeat'
+            ? '/repeat M1 off|weekly|monthly|yearly'
+            : '/category M1|G1 general|work|personal|health|travel',
+        ),
+        completionCommitted: false,
+      };
+    }
+    const list = match[1] === 'M' ? user.events : selectedGoogleEvents(user);
+    const event = list[Number(match[2]) - 1];
+
+    if (!event || (command === '/repeat' && match[1] !== 'M')) {
+      return {
+        reply: usageReply(
+          command === '/repeat' ? 'Only manual events repeat' : 'Choose a tracked event',
+          command === '/repeat'
+            ? '/repeat M1 off|weekly|monthly|yearly'
+            : '/category M1|G1 general|work|personal|health|travel',
+        ),
+        completionCommitted: false,
+      };
+    }
+    if (command === '/repeat')
+      await setManualEventRecurrence(
+        token,
+        event.id,
+        value === 'off' ? 'none' : (value as import('./userSchema').EventRecurrence),
+        completion,
+      );
+    else
+      await setEventCategory(
+        token,
+        event.id,
+        value as import('./userSchema').EventCategory,
+        completion,
+      );
+
+    return {
+      reply: htmlReply(
+        `✓ <b>${command === '/repeat' ? 'Recurrence' : 'Category'} updated</b>\n${escapeTelegramHtml(event.name)} · ${escapeTelegramHtml(value)}\n${WALLPAPER_REFRESH_NOTE}`,
+      ),
+      completionCommitted: Boolean(completion),
+    };
+  }
+
+  if (command === '/overlay' || command === '/living') {
+    const overlay = args[0];
+
+    if (
+      !['none', 'snow', 'rain', 'stars', 'haze', 'sunset', 'seasonal'].includes(
+        String(overlay),
+      )
+    )
+      return {
+        reply: usageReply(
+          'Choose a static living overlay',
+          '/living none|snow|rain|stars|haze|sunset|seasonal',
+        ),
+        completionCommitted: false,
+      };
+    await updatePreferences(
+      token,
+      { livingOverlay: overlay as import('./userSchema').LivingOverlay },
+      completion,
+    );
+
+    return {
+      reply: htmlReply(
+        `✓ <b>Living overlay updated</b>\n${escapeTelegramHtml(overlay!)} · static per fetch, not live weather.\n${WALLPAPER_REFRESH_NOTE}`,
+      ),
+      completionCommitted: Boolean(completion),
+    };
+  }
+
+  if (command === '/ring' || command === '/rings') {
+    const style = args[0];
+
+    if (!['single', 'double', 'halo'].includes(String(style)))
+      return {
+        reply: usageReply('Choose a milestone ring', '/rings single|double|halo'),
+        completionCommitted: false,
+      };
+    await updatePreferences(
+      token,
+      { milestoneRingStyle: style as import('./userSchema').MilestoneRingStyle },
+      completion,
+    );
+
+    return {
+      reply: htmlReply(
+        `✓ <b>Milestone ring updated</b>\n${escapeTelegramHtml(style!)}\n${WALLPAPER_REFRESH_NOTE}`,
+      ),
+      completionCommitted: Boolean(completion),
+    };
+  }
+
+  if (command === '/studio') {
+    if (!context)
+      return {
+        reply: usageReply('Theme studio', '/studio mood|color #RRGGBB [name]'),
+        completionCommitted: false,
+      };
+    const mood = args[0]?.toLowerCase();
+
+    if (!mood) {
+      return { reply: studioMoodPickerReply(), completionCommitted: false };
+    }
+
+    const name = (mood === 'color' ? args[2] : mood) ?? 'studio';
+    const selection = isStudioMood(mood)
+      ? createMoodTheme(mood)
+      : mood === 'color' && args[1]
+        ? createColorTheme(name, args[1])
+        : null;
+
+    if (!selection)
+      return {
+        reply: usageReply(
+          'Theme studio',
+          '/studio calm|warm|focus|night|fresh or /studio color #RRGGBB [name]',
+        ),
+        completionCommitted: false,
+      };
+    const { theme, overlay } = selection;
+
+    if (isReservedThemeId(theme.id))
+      return {
+        reply: htmlReply(
+          '<b>Choose another name</b>\nBuilt-in names are reserved; names use lowercase letters, numbers, and hyphens.',
+        ),
+        completionCommitted: false,
+      };
+    const user = await getUser(token);
+
+    if (
+      !user ||
+      (user.customThemes.length >= 5 &&
+        !user.customThemes.some((candidate) => candidate.id === theme.id))
+    )
+      return {
+        reply: htmlReply(
+          '<b>Theme limit reached</b>\nDelete a custom theme before saving another.',
+        ),
+        completionCommitted: false,
+      };
+    const draft = await createStudioDraft(
+      {
+        token,
+        userId: context.userId,
+        chatId: context.chatId,
+        theme,
+        livingOverlay: overlay,
+      },
+      completion,
+    );
+
+    return {
+      reply: studioReply(draft),
+      themeSelector: { themes: [theme] },
+      completionCommitted: Boolean(completion),
+    };
+  }
+
+  if (command === '/autoprofile') {
+    const user = await getUser(token);
+
+    if (!user) throw new Error('Linked account no longer exists');
+    const profiles = user.automaticProfiles!;
+    const action = args[0];
+
+    if (!action || action === 'status')
+      return { reply: htmlReply(autoProfileText(profiles)), completionCommitted: false };
+    if (action === 'on' || action === 'off') {
+      await updatePreferences(
+        token,
+        { automaticProfiles: { ...profiles, enabled: action === 'on' } },
+        completion,
+      );
+
+      return {
+        reply: htmlReply(
+          `✓ <b>Automatic profiles ${action}</b>\n${WALLPAPER_REFRESH_NOTE}`,
+        ),
+        completionCommitted: Boolean(completion),
+      };
+    }
+    const slotName = action === 'save' ? args[1] : action;
+
+    if (!['day', 'evening', 'night'].includes(String(slotName)))
+      return {
+        reply: usageReply(
+          'Automatic profiles',
+          '/autoprofile status|on|off|save day|evening|night',
+        ),
+        completionCommitted: false,
+      };
+    const name = slotName as 'day' | 'evening' | 'night';
+    const ranges = { day: [6, 18], evening: [18, 22], night: [22, 6] } as const;
+    const slot = profiles[name];
+
+    await updatePreferences(
+      token,
+      {
+        automaticProfiles: {
+          ...profiles,
+          [name]: {
+            ...slot,
+            enabled: true,
+            startHour: ranges[name][0],
+            endHour: ranges[name][1],
+            theme: user.theme,
+            timeRange: user.timeRange,
+            presentation: user.presentation,
+            lockScreenProfile: user.lockScreenProfile,
+            eventCount: user.eventCount,
+            livingOverlay: user.livingOverlay,
+            milestoneRingStyle: user.milestoneRingStyle,
+          },
+        },
+      },
+      completion,
+    );
+
+    return {
+      reply: htmlReply(
+        `✓ <b>${escapeTelegramHtml(name)} slot saved</b>\nUses ${ranges[name][0]}:00–${ranges[name][1]}:00 at read time.`,
+      ),
+      completionCommitted: Boolean(completion),
+    };
+  }
+
+  if (command === '/share') {
+    const user = await getUser(token);
+    const match = args[0]?.toUpperCase().match(/^([MG])(\d+)$/);
+
+    if (!user || !match)
+      return {
+        reply: usageReply('Share a countdown', '/share M1|G1'),
+        completionCommitted: false,
+      };
+    const list = match[1] === 'M' ? user.events : selectedGoogleEvents(user);
+    const event = list[Number(match[2]) - 1];
+
+    if (!event)
+      return {
+        reply: usageReply('Share a countdown', '/share M1|G1'),
+        completionCommitted: false,
+      };
+    const share = await createSharedCountdown(token, event.id, completion);
+
+    return {
+      reply: {
+        text: `✓ Shared read-only countdown\n${origin}/api/share?key=${share?.key}`,
+      },
+      completionCommitted: Boolean(completion),
+    };
+  }
+
+  if (command === '/shares') {
+    const user = await getUser(token);
+    const shares = user?.sharedCountdowns ?? [];
+
+    return {
+      reply: htmlReply(
+        shares.length
+          ? [
+              '<b>Shared countdowns</b>',
+              '',
+              ...shares.map(
+                (share, index) =>
+                  `${index + 1}. ${escapeTelegramHtml([...user!.events, ...user!.cachedCalEvents].find((event) => event.id === share.eventId)?.name ?? 'Removed event')}\n<code>${escapeTelegramHtml(`${origin}/api/share?key=${share.key}`)}</code>`,
+              ),
+              '',
+              'Revoke with <code>/unshare NUMBER</code>.',
+            ].join('\n')
+          : '<b>No shared countdowns</b>',
+      ),
+      completionCommitted: false,
+    };
+  }
+
+  if (command === '/unshare') {
+    const user = await getUser(token);
+    const index = Number(args[0]) - 1;
+    const share = user?.sharedCountdowns?.[index];
+
+    if (!share)
+      return {
+        reply: usageReply('Revoke a shared countdown', '/unshare NUMBER'),
+        completionCommitted: false,
+      };
+    await revokeSharedCountdown(token, share.id, completion);
+
+    return {
+      reply: htmlReply('✓ <b>Shared countdown revoked</b>'),
+      completionCommitted: Boolean(completion),
     };
   }
 
@@ -1586,6 +2146,17 @@ function titleCase(value: string): string {
   return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+/** Stable G references follow the user's selection order, not cache arrival order. */
+function selectedGoogleEvents(user: UserData): UserData['cachedCalEvents'] {
+  const cached = new Map(user.cachedCalEvents.map((event) => [event.id, event]));
+
+  return user.selectedEventIds.flatMap((id) => {
+    const event = cached.get(id);
+
+    return event ? [event] : [];
+  });
+}
+
 function helpText(): string {
   return [
     '<b>Calendar Lockscreen</b>',
@@ -1598,6 +2169,10 @@ function helpText(): string {
     '<code>/add Event name</code>  Guided date picker',
     '<code>/add Dentist tomorrow</code>  Natural dates work too',
     '<code>/events</code>',
+    '<code>/today</code> or <code>/week</code>  Upcoming tracked events',
+    '<code>/focus M1|G1|off</code>  Pin or clear a countdown event',
+    '<code>/repeat M1 off|weekly|monthly|yearly</code>',
+    '<code>/category M1|G1 general|work|personal|health|travel</code>',
     '<code>/edit</code> or <code>/edit NUMBER</code>  Review an event before saving',
     '<code>/eventcount 1|2|3|4|5</code>  Events shown (default 2)',
     '<code>/delete NUMBER</code>',
@@ -1612,10 +2187,79 @@ function helpText(): string {
     '<code>/theme NAME</code>',
     '<code>/theme custom add name #BG #PASSED #WEEKEND #CURRENT #FUTURE</code>',
     '<code>/theme custom delete name</code>',
+    '<code>/living none|snow|rain|stars|haze|sunset|seasonal</code>  Static visual overlay, never live weather',
+    '<code>/rings single|double|halo</code>',
+    '<code>/studio</code>  Pick and preview a mood, or use <code>/studio color #RRGGBB name</code>',
+    '<code>/autoprofile status|on|off|save day|evening|night</code>',
+    '<code>/share M1|G1</code> · <code>/shares</code> · <code>/unshare NUMBER</code>',
     '',
     '<b>Calendar</b>',
     '<code>/sync</code>  Refresh Google events',
   ].join('\n');
+}
+
+function studioReply(draft: TelegramStudioDraft): TelegramReply {
+  const prefix = `studio:${draft.id}:${draft.revision}:`;
+
+  return htmlReply(
+    `<b>Preview studio theme</b>\n${escapeTelegramHtml(draft.theme.id)}\nSave this palette?`,
+    {
+      inline_keyboard: [
+        [
+          { text: 'Save theme', callback_data: `${prefix}save` },
+          { text: 'Cancel', callback_data: `${prefix}cancel` },
+        ],
+      ],
+    },
+  );
+}
+
+function studioMoodPickerReply(): TelegramReply {
+  const button = (label: string, mood: StudioMood) => ({
+    text: label,
+    callback_data: `studio-mood:${mood}`,
+  });
+
+  return htmlReply(
+    [
+      '<b>Theme Studio</b>',
+      'Choose a mood to see its actual palette before saving.',
+      'Each mood also chooses a matching static living effect.',
+    ].join('\n'),
+    {
+      inline_keyboard: [
+        [button('Calm', 'calm'), button('Warm', 'warm')],
+        [button('Focus', 'focus'), button('Night', 'night')],
+        [button('Fresh', 'fresh')],
+      ],
+    },
+  );
+}
+
+function autoProfileText(profiles: import('./userSchema').AutomaticProfiles): string {
+  return [
+    '<b>Automatic profiles</b>',
+    `Status: <b>${profiles.enabled ? 'on' : 'off'}</b>`,
+    ...(['day', 'evening', 'night'] as const).map((name) => {
+      const slot = profiles[name];
+
+      const ranges = { day: '06:00–18:00', evening: '18:00–22:00', night: '22:00–06:00' };
+
+      return `${name}: ${slot.enabled ? 'on' : 'off'} · ${ranges[name]} · ${escapeTelegramHtml(slot.theme ?? 'current theme')}`;
+    }),
+  ].join('\n');
+}
+
+function localDate(timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+
+  return `${value('year')}-${value('month')}-${value('day')}`;
 }
 
 function htmlReply(
@@ -1690,6 +2334,12 @@ function expectedCommandErrorReply(message: string): TelegramReply | null {
 
   if (message === 'Event not found') {
     return deleteUsageReply();
+  }
+
+  if (message === 'Event is not upcoming') {
+    return htmlReply(
+      '<b>Countdown already passed</b>\nChoose a current or future event to share.',
+    );
   }
 
   if (message === 'Maximum 7 tracked events allowed') {

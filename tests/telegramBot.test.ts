@@ -328,6 +328,36 @@ describe('Telegram commands', () => {
     });
   });
 
+  it('reports the effective automatic profile rather than stale base settings', async () => {
+    const slot = {
+      enabled: true,
+      theme: 'ocean',
+      timeRange: 'year' as const,
+      presentation: 'countdown' as const,
+      lockScreenProfile: 'large-clock' as const,
+      eventCount: 5,
+      livingOverlay: 'stars' as const,
+      milestoneRingStyle: 'halo' as const,
+    };
+
+    await seedLinkedUser({
+      automaticProfiles: {
+        enabled: true,
+        day: slot,
+        evening: slot,
+        night: slot,
+      },
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/status'), 'https://example.com');
+
+    expect(deliveryBody(0).text).toContain('Range: <b>year</b>');
+    expect(deliveryBody(0).text).toContain('Layout: <b>countdown</b>');
+    expect(deliveryBody(0).text).toContain('Theme now: <b>ocean</b>');
+    expect(deliveryBody(0).text).toContain('Living: <b>stars</b>');
+  });
+
   it('keeps the URL command plain and directly copyable', async () => {
     await seedLinkedUser({ wallpaperKey: 'wallpaper-key' });
     const { processTelegramUpdate } = await import('../lib/telegramBot');
@@ -792,6 +822,122 @@ describe('Telegram commands', () => {
     ).rejects.toThrow('storage unavailable');
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('opens Theme Studio as a one-tap mood picker', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/studio'), 'https://example.com');
+
+    expect(deliveryBody(0)).toMatchObject({
+      chat_id: '42',
+      text: expect.stringContaining('<b>Theme Studio</b>'),
+    });
+    expect(deliveryBody(0).reply_markup.inline_keyboard.flat()).toEqual([
+      { text: 'Calm', callback_data: 'studio-mood:calm' },
+      { text: 'Warm', callback_data: 'studio-mood:warm' },
+      { text: 'Focus', callback_data: 'studio-mood:focus' },
+      { text: 'Night', callback_data: 'studio-mood:night' },
+      { text: 'Fresh', callback_data: 'studio-mood:fresh' },
+    ]);
+  });
+
+  it('previews and saves a mood with its matching living effect', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(
+      callbackWithIdentity('studio-mood:fresh', 42, 42, 'private'),
+      'https://example.com',
+    );
+
+    const draft = await redis.get<{
+      id: string;
+      revision: string;
+      livingOverlay: string;
+      theme: { id: string };
+    }>('telegram:studio:42');
+
+    expect(draft).toMatchObject({ livingOverlay: 'rain', theme: { id: 'fresh' } });
+    expect(fetchMock.mock.calls[0][0]).toContain('/sendPhoto');
+    expect(fetchMock.mock.calls[1][0]).toContain('/answerCallbackQuery');
+
+    fetchMock.mockClear();
+    await processTelegramUpdate(
+      callbackWithIdentity(
+        `studio:${draft!.id}:${draft!.revision}:save`,
+        42,
+        42,
+        'private',
+      ),
+      'https://example.com',
+    );
+
+    const user = await redis.get<UserData>('user:owner');
+
+    expect(user).toMatchObject({ theme: 'fresh', livingOverlay: 'rain' });
+    expect(user?.customThemes).toEqual([
+      expect.objectContaining({ id: 'fresh', background: '#203A36' }),
+    ]);
+    expect(await redis.get('telegram:studio:42')).toBeNull();
+  });
+
+  it('preserves the winning Studio action when save and cancel callbacks race', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/studio night'), 'https://example.com');
+    const draft = await redis.get<{ id: string; revision: string }>('telegram:studio:42');
+    const prefix = `studio:${draft!.id}:${draft!.revision}:`;
+
+    fetchMock.mockClear();
+    await processTelegramUpdate(
+      callbackWithIdentity(`${prefix}cancel`, 42, 42, 'private'),
+      'https://example.com',
+    );
+
+    fetchMock.mockClear();
+    await processTelegramUpdate(
+      callbackWithIdentity(`${prefix}save`, 42, 42, 'private'),
+      'https://example.com',
+    );
+
+    expect((await redis.get<UserData>('user:owner'))?.theme).toBe('default');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(deliveryBody(0)).toMatchObject({ text: 'Already cancelled.' });
+  });
+
+  it('uses one canonical Google reference order across event lists and sharing', async () => {
+    await seedLinkedUser({
+      selectedEventIds: ['first', 'second'],
+      cachedCalEvents: [googleEvent('second'), googleEvent('first')],
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
+
+    expect(deliveryBody(0).text).toContain('G1. <b>2026-11-02</b> · Google first');
+    expect(deliveryBody(0).text).toContain('G2. <b>2026-11-02</b> · Google second');
+
+    fetchMock.mockClear();
+    await processTelegramUpdate(telegramUpdate('/share G1'), 'https://example.com');
+
+    const user = await redis.get<UserData>('user:owner');
+
+    expect(user?.sharedCountdowns?.[0]).toMatchObject({ eventId: 'first' });
+  });
+
+  it('refuses to create a share link that would already be expired', async () => {
+    await seedLinkedUser({
+      events: [{ ...manualEvent('past', 'Past event'), date: '2000-01-01' }],
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/share M1'), 'https://example.com');
+
+    expect(deliveryBody(0).text).toContain('<b>Countdown already passed</b>');
+    expect((await redis.get<UserData>('user:owner'))?.sharedCountdowns).toBeUndefined();
+  });
 });
 
 async function seedLinkedUser(overrides: Partial<UserData> = {}): Promise<void> {
@@ -804,7 +950,7 @@ async function seedLinkedUser(overrides: Partial<UserData> = {}): Promise<void> 
 
 function userRecord(): UserData {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     token: 'owner',
     name: 'Ada',
     theme: 'default',
@@ -833,6 +979,8 @@ function manualEvent(id: string, name: string) {
     date: '2026-11-01',
     source: 'manual' as const,
     createdAt: '2026-10-23T00:00:00.000Z',
+    category: 'general' as const,
+    recurrence: 'none' as const,
   };
 }
 

@@ -198,7 +198,14 @@ function fitDotGrid(model: WallpaperModel, events: WallpaperEventLayout) {
     CALENDAR_DOT_GEOMETRY[model.timeRange === 'rolling14' ? 'week' : model.timeRange];
   const { columns, eventRingGap, eventRingWidth } = geometry;
   const rows = Math.ceil(model.cells.length / columns);
-  const ringOutset = eventRingGap + eventRingWidth;
+  const ringOutset =
+    eventRingGap +
+    eventRingWidth +
+    (model.milestoneRingStyle === 'halo'
+      ? 10
+      : model.milestoneRingStyle === 'double'
+        ? 7
+        : 0);
   const top = FIRST_DOT_TOP[model.lockScreenProfile] - ringOutset;
   const contentWidth = WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT;
   const availableHeight =

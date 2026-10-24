@@ -21,6 +21,50 @@ export interface ManualEvent {
   date: string;
   source: 'manual';
   createdAt: string;
+  category: EventCategory;
+  recurrence: EventRecurrence;
+}
+
+export const EVENT_CATEGORIES = [
+  'general',
+  'work',
+  'personal',
+  'health',
+  'travel',
+] as const;
+export const EVENT_RECURRENCES = ['none', 'weekly', 'monthly', 'yearly'] as const;
+export type EventCategory = (typeof EVENT_CATEGORIES)[number];
+export type EventRecurrence = (typeof EVENT_RECURRENCES)[number];
+export type MilestoneRingStyle = 'single' | 'double' | 'halo';
+export type LivingOverlay =
+  'none' | 'snow' | 'rain' | 'stars' | 'haze' | 'sunset' | 'seasonal';
+
+export interface ProfileSlot {
+  enabled: boolean;
+  /** Retained for legacy Telegram profile messages; rendering uses fixed named slots. */
+  startHour?: number;
+  endHour?: number;
+  theme?: string;
+  timeRange?: TimeRange;
+  presentation?: Presentation;
+  lockScreenProfile?: LockScreenProfile;
+  eventCount?: number;
+  livingOverlay?: LivingOverlay;
+  milestoneRingStyle?: MilestoneRingStyle;
+}
+
+export interface AutomaticProfiles {
+  enabled: boolean;
+  day: ProfileSlot;
+  evening: ProfileSlot;
+  night: ProfileSlot;
+}
+
+export interface SharedCountdown {
+  id: string;
+  eventId: string;
+  key: string;
+  createdAt: string;
 }
 
 export interface GoogleAccount {
@@ -46,7 +90,7 @@ export interface TelegramLink {
 }
 
 export interface UserData {
-  schemaVersion: 4;
+  schemaVersion: 5;
   token: string;
   wallpaperKey?: string;
   name: string;
@@ -63,6 +107,12 @@ export interface UserData {
   cachedCalEvents: CalendarEvent[];
   cachedCalAt: number;
   telegram?: TelegramLink;
+  focusEventId?: string;
+  googleCategoryOverrides?: Record<string, EventCategory>;
+  livingOverlay?: LivingOverlay;
+  milestoneRingStyle?: MilestoneRingStyle;
+  automaticProfiles?: AutomaticProfiles;
+  sharedCountdowns?: SharedCountdown[];
   [key: string]: unknown;
 }
 
@@ -86,7 +136,7 @@ export function normalizeUserData(raw: unknown, token: string): UserData | null 
 
   return {
     ...record,
-    schemaVersion: 4,
+    schemaVersion: 5,
     token: typeof record.token === 'string' ? record.token : token,
     wallpaperKey:
       typeof record.wallpaperKey === 'string' && record.wallpaperKey
@@ -111,6 +161,13 @@ export function normalizeUserData(raw: unknown, token: string): UserData | null 
         ? record.cachedCalAt
         : 0,
     telegram: normalizeTelegram(record.telegram),
+    focusEventId:
+      typeof record.focusEventId === 'string' ? record.focusEventId : undefined,
+    googleCategoryOverrides: normalizeCategoryOverrides(record.googleCategoryOverrides),
+    livingOverlay: normalizeLivingOverlay(record.livingOverlay),
+    milestoneRingStyle: normalizeRingStyle(record.milestoneRingStyle),
+    automaticProfiles: normalizeAutomaticProfiles(record.automaticProfiles, customThemes),
+    sharedCountdowns: normalizeSharedCountdowns(record.sharedCountdowns),
   };
 }
 
@@ -170,9 +227,139 @@ function normalizeManualEvents(value: unknown): ManualEvent[] {
           typeof event.createdAt === 'string'
             ? event.createdAt
             : '1970-01-01T00:00:00.000Z',
+        category: normalizeEventCategory(event.category),
+        recurrence: normalizeEventRecurrence(event.recurrence),
       },
     ];
   });
+}
+
+function normalizeEventCategory(value: unknown): EventCategory {
+  return EVENT_CATEGORIES.includes(value as EventCategory)
+    ? (value as EventCategory)
+    : 'general';
+}
+
+function normalizeEventRecurrence(value: unknown): EventRecurrence {
+  return EVENT_RECURRENCES.includes(value as EventRecurrence)
+    ? (value as EventRecurrence)
+    : 'none';
+}
+
+function normalizeLivingOverlay(value: unknown): LivingOverlay {
+  return ['none', 'snow', 'rain', 'stars', 'haze', 'sunset', 'seasonal'].includes(
+    String(value),
+  )
+    ? (value as LivingOverlay)
+    : 'none';
+}
+
+function normalizeRingStyle(value: unknown): MilestoneRingStyle {
+  return ['single', 'double', 'halo'].includes(String(value))
+    ? (value as MilestoneRingStyle)
+    : 'single';
+}
+
+function normalizeAutomaticProfiles(
+  value: unknown,
+  customThemes: WallpaperTheme[],
+): AutomaticProfiles {
+  const defaults: AutomaticProfiles = {
+    enabled: false,
+    day: { enabled: true },
+    evening: { enabled: true },
+    night: { enabled: true },
+  };
+
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return defaults;
+  const input = value as UnknownRecord;
+  const slot = (candidate: unknown, fallback: ProfileSlot): ProfileSlot => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate))
+      return fallback;
+    const record = candidate as UnknownRecord;
+
+    return {
+      enabled: record.enabled !== false,
+      startHour:
+        typeof record.startHour === 'number' && Number.isInteger(record.startHour)
+          ? record.startHour
+          : undefined,
+      endHour:
+        typeof record.endHour === 'number' && Number.isInteger(record.endHour)
+          ? record.endHour
+          : undefined,
+      theme: normalizeOptionalTheme(record.theme, customThemes),
+      timeRange: isTimeRange(record.timeRange) ? record.timeRange : undefined,
+      presentation: isPresentation(record.presentation) ? record.presentation : undefined,
+      lockScreenProfile: isLockScreenProfile(record.lockScreenProfile)
+        ? record.lockScreenProfile
+        : undefined,
+      eventCount: isEventCount(record.eventCount) ? record.eventCount : undefined,
+      livingOverlay:
+        record.livingOverlay === undefined
+          ? undefined
+          : normalizeLivingOverlay(record.livingOverlay),
+      milestoneRingStyle:
+        record.milestoneRingStyle === undefined
+          ? undefined
+          : normalizeRingStyle(record.milestoneRingStyle),
+    };
+  };
+
+  return {
+    enabled: input.enabled === true,
+    day: slot(input.day, defaults.day),
+    evening: slot(input.evening, defaults.evening),
+    night: slot(input.night, defaults.night),
+  };
+}
+
+function normalizeOptionalTheme(
+  value: unknown,
+  customThemes: WallpaperTheme[],
+): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const theme = normalizeTheme(value, customThemes);
+
+  return theme === 'default' && value !== 'default' ? undefined : theme;
+}
+
+function normalizeCategoryOverrides(value: unknown): Record<string, EventCategory> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value as UnknownRecord).flatMap(([id, category]) =>
+      typeof id === 'string' && EVENT_CATEGORIES.includes(category as EventCategory)
+        ? [[id, category as EventCategory]]
+        : [],
+    ),
+  );
+}
+
+function normalizeSharedCountdowns(value: unknown): SharedCountdown[] {
+  if (!Array.isArray(value)) return [];
+
+  return value
+    .flatMap((candidate) => {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate))
+        return [];
+      const item = candidate as UnknownRecord;
+
+      return typeof item.id === 'string' &&
+        typeof item.eventId === 'string' &&
+        typeof item.key === 'string' &&
+        typeof item.createdAt === 'string'
+        ? [
+            {
+              id: item.id,
+              eventId: item.eventId,
+              key: item.key,
+              createdAt: item.createdAt,
+            },
+          ]
+        : [];
+    })
+    .slice(0, 5);
 }
 
 function normalizeGoogleAccounts(value: unknown): GoogleAccount[] {

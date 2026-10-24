@@ -12,6 +12,8 @@ People who want their current calendar and important dates visible on an iPhone 
 
 Calendar Lockscreen turns calendar ranges, truthful period progress, and upcoming-event countdowns into a live iPhone wallpaper. Success means users can understand their current preset, range, presentation, and lock-screen fit, make a change quickly, and trust that the dashboard, Telegram bot, calendar data, and next wallpaper refresh stay in sync.
 
+Living decorations are deliberately static deterministic frames, not a weather feed or live animation.
+
 ## Brand Personality
 
 Clean, premium, and calm. The product should feel precise and quietly helpful rather than playful, chatty, or ornamental.

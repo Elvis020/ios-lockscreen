@@ -21,6 +21,7 @@ import {
 } from '../lib/wallpaperLayout';
 import { buildWallpaperModel } from '../lib/wallpaperModel';
 import { dateAtPeriodDay } from '../lib/periodCalculator';
+import { normalizeUserData } from '../lib/userSchema';
 
 const date = new Date('2026-10-24T12:00:00Z');
 const publicEvents = [
@@ -305,6 +306,72 @@ describe('native wallpaper scene', () => {
       }).toEqual(center);
     }
   });
+
+  it.each(['double', 'halo'] as const)(
+    'draws the %s outer ring before carving it and painting the inner marker',
+    (milestoneRingStyle) => {
+      const user = normalizeUserData(
+        {
+          token: 'owner',
+          name: 'Ada',
+          theme: 'default',
+          timeRange: 'month',
+          presentation: 'calendar',
+          lockScreenProfile: 'standard',
+          timeZone: 'UTC',
+          milestoneRingStyle,
+          events: [
+            {
+              id: 'launch',
+              name: 'Launch',
+              date: '2026-10-24',
+              source: 'manual',
+              createdAt: '2026-01-01T00:00:00.000Z',
+              category: 'work',
+              recurrence: 'none',
+            },
+          ],
+        },
+        'owner',
+      )!;
+      const model = buildWallpaperModel({ date, user });
+      const grid = getContinuousDotGridLayout(model);
+      const outerOffset =
+        grid.eventRingGap +
+        grid.eventRingWidth +
+        (milestoneRingStyle === 'halo' ? 10 : 7);
+      const outerDiameter = grid.size + outerOffset * 2;
+      const outerRingWidth = milestoneRingStyle === 'halo' ? 2 : grid.eventRingWidth;
+      const scene = buildNativeWallpaperScene(model);
+      const start = scene.commands.findIndex(
+        (command) => command.kind === 'circle' && command.diameter === outerDiameter,
+      );
+      const layers = scene.commands.slice(start, start + 5);
+
+      expect(layers).toEqual([
+        expect.objectContaining({
+          kind: 'circle',
+          diameter: outerDiameter,
+          fill: milestoneRingStyle === 'halo' ? model.theme.future : expect.any(String),
+        }),
+        expect.objectContaining({
+          kind: 'circle',
+          diameter: outerDiameter - outerRingWidth * 2,
+          fill: model.theme.background,
+        }),
+        expect.objectContaining({
+          kind: 'circle',
+          diameter: grid.size + 2 * (grid.eventRingGap + grid.eventRingWidth),
+        }),
+        expect.objectContaining({
+          kind: 'circle',
+          diameter: grid.size + 2 * grid.eventRingGap,
+          fill: model.theme.background,
+        }),
+        expect.objectContaining({ kind: 'circle', diameter: grid.size }),
+      ]);
+    },
+  );
 
   it('keeps event markers separated even on adjacent event days', () => {
     const model = buildWallpaperModel({

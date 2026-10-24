@@ -18,6 +18,9 @@ import {
   type CalendarEvent,
   type GoogleAccount,
   type ManualEvent,
+  type EventCategory,
+  type EventRecurrence,
+  type SharedCountdown,
   type TelegramLink,
   type UserData,
 } from './userSchema';
@@ -26,6 +29,7 @@ import {
   normalizeTelegramDraft,
   type TelegramEventDraft,
 } from './telegramDrafts';
+import { nextOccurrenceOnOrAfter } from './eventTimeline';
 
 export type { CalendarEvent, GoogleAccount, ManualEvent, UserData } from './userSchema';
 
@@ -66,7 +70,7 @@ export async function createUser(
     const token = generateUUID();
     const wallpaperKey = generateUUID();
     const userData: UserData = {
-      schemaVersion: 4,
+      schemaVersion: 5,
       token,
       wallpaperKey,
       name: name.trim(),
@@ -143,7 +147,8 @@ export async function ensureWallpaperKey(
 
 export async function addManualEvent(
   token: string,
-  event: Pick<ManualEvent, 'name' | 'date'>,
+  event: Pick<ManualEvent, 'name' | 'date'> &
+    Partial<Pick<ManualEvent, 'category' | 'recurrence'>>,
   completion?: MutationCompletion,
 ): Promise<UserData | null> {
   return mutateUser(
@@ -158,6 +163,8 @@ export async function addManualEvent(
         id: generateUUID(),
         source: 'manual',
         createdAt: new Date().toISOString(),
+        category: event.category ?? 'general',
+        recurrence: event.recurrence ?? 'none',
       });
     },
     completion,
@@ -230,6 +237,8 @@ export async function saveTelegramDraftEvent(
         date: active.date,
         source: 'manual',
         createdAt: new Date().toISOString(),
+        category: 'general',
+        recurrence: 'none',
       });
 
       const wallpaperKey = user.wallpaperKey ?? generateUUID();
@@ -363,7 +372,10 @@ export async function saveTelegramEditDraft(
 
 export async function replaceManualEvents(
   token: string,
-  events: Array<Pick<ManualEvent, 'name' | 'date'>>,
+  events: Array<
+    Pick<ManualEvent, 'name' | 'date'> &
+      Partial<Pick<ManualEvent, 'category' | 'recurrence'>>
+  >,
 ): Promise<UserData | null> {
   return mutateUser(token, (user) => {
     if (events.length + user.selectedEventIds.length > 7) {
@@ -375,7 +387,11 @@ export async function replaceManualEvents(
       id: generateUUID(),
       source: 'manual',
       createdAt: new Date().toISOString(),
+      category: event.category ?? 'general',
+      recurrence: event.recurrence ?? 'none',
     }));
+
+    return pruneEventMetadata(user);
   });
 }
 
@@ -391,6 +407,8 @@ export async function deleteManualEvent(
     if (user.events.length === originalLength) {
       throw new Error('Event not found');
     }
+
+    return pruneEventMetadata(user);
   });
 }
 
@@ -407,6 +425,8 @@ export async function deleteManualEventAtIndex(
       }
 
       user.events.splice(index, 1);
+
+      return pruneEventMetadata(user);
     },
     completion,
   );
@@ -423,6 +443,10 @@ export async function updatePreferences(
       | 'lockScreenProfile'
       | 'timeZone'
       | 'eventCount'
+      | 'focusEventId'
+      | 'livingOverlay'
+      | 'milestoneRingStyle'
+      | 'automaticProfiles'
     >
   >,
   completion?: MutationCompletion,
@@ -461,9 +485,206 @@ export async function updatePreferences(
 
         user.eventCount = preferences.eventCount;
       }
+
+      if (preferences.focusEventId !== undefined) {
+        if (
+          ![...user.events.map(({ id }) => id), ...user.selectedEventIds].includes(
+            preferences.focusEventId,
+          )
+        ) {
+          throw new Error('Focus event is unavailable');
+        }
+
+        user.focusEventId = preferences.focusEventId;
+      }
+
+      if (preferences.livingOverlay !== undefined)
+        user.livingOverlay = preferences.livingOverlay;
+      if (preferences.milestoneRingStyle !== undefined)
+        user.milestoneRingStyle = preferences.milestoneRingStyle;
+      if (preferences.automaticProfiles !== undefined)
+        user.automaticProfiles = preferences.automaticProfiles;
     },
     completion,
   );
+}
+
+export async function setManualEventRecurrence(
+  token: string,
+  eventId: string,
+  recurrence: EventRecurrence,
+  completion?: MutationCompletion,
+): Promise<UserData | null> {
+  return mutateUser(
+    token,
+    (user) => {
+      const event = user.events.find(({ id }) => id === eventId);
+
+      if (!event) throw new Error('Event not found');
+      event.recurrence = recurrence;
+    },
+    completion,
+  );
+}
+
+export async function setEventCategory(
+  token: string,
+  eventId: string,
+  category: EventCategory,
+  completion?: MutationCompletion,
+): Promise<UserData | null> {
+  return mutateUser(
+    token,
+    (user) => {
+      const manual = user.events.find(({ id }) => id === eventId);
+
+      if (manual) {
+        manual.category = category;
+
+        return;
+      }
+      if (!user.selectedEventIds.includes(eventId))
+        throw new Error('Event is unavailable');
+      user.googleCategoryOverrides = {
+        ...(user.googleCategoryOverrides ?? {}),
+        [eventId]: category,
+      };
+    },
+    completion,
+  );
+}
+
+export async function setFocusEvent(
+  token: string,
+  eventId?: string,
+  completion?: MutationCompletion,
+): Promise<UserData | null> {
+  return mutateUser(
+    token,
+    (user) => {
+      if (
+        eventId &&
+        ![...user.events.map(({ id }) => id), ...user.selectedEventIds].includes(eventId)
+      ) {
+        throw new Error('Focus event is unavailable');
+      }
+      user.focusEventId = eventId;
+    },
+    completion,
+  );
+}
+
+export async function createSharedCountdown(
+  token: string,
+  eventId: string,
+  completion?: MutationCompletion,
+): Promise<SharedCountdown | null> {
+  const redis = getRedis();
+
+  return withRedisLock(redis, `user:${token}`, async (lease) => {
+    const user = await readUser(redis, token);
+
+    if (!user) return null;
+    if (completion && (await redis.get(completion.key))) {
+      return user.sharedCountdowns?.find(({ eventId: id }) => id === eventId) ?? null;
+    }
+    const manual = user.events.find(({ id }) => id === eventId);
+    const google = user.cachedCalEvents.find(({ id }) => id === eventId);
+
+    if (!manual && !google) throw new Error('Event not found');
+    if (!manual && !user.selectedEventIds.includes(eventId))
+      throw new Error('Event is unavailable');
+    const today = currentCivilDate(user.timeZone);
+    const nextDate = manual ? nextOccurrenceOnOrAfter(manual, today) : google!.date;
+
+    if (!nextDate || nextDate < today) throw new Error('Event is not upcoming');
+    const existing = user.sharedCountdowns?.find(({ eventId: id }) => id === eventId);
+
+    if (existing) {
+      if (completion) {
+        await commitIfLeasesOwned(
+          redis,
+          [lease],
+          [{ key: completion.key, value: 'done', ttlSeconds: completion.ttlSeconds }],
+        );
+      }
+
+      return existing;
+    }
+    if ((user.sharedCountdowns ?? []).length >= 5)
+      throw new Error('Maximum 5 shared countdowns allowed');
+    const share: SharedCountdown = {
+      id: generateUUID(),
+      eventId,
+      key: generateUUID(),
+      createdAt: new Date().toISOString(),
+    };
+
+    user.sharedCountdowns = [...(user.sharedCountdowns ?? []), share];
+    const wallpaperKey = user.wallpaperKey ?? generateUUID();
+
+    user.wallpaperKey = wallpaperKey;
+    await commitIfLeasesOwned(
+      redis,
+      [lease],
+      [
+        { key: `user:${token}`, value: user },
+        { key: `wallpaper:${wallpaperKey}`, value: token },
+        { key: `share:${share.key}`, value: { token, shareId: share.id } },
+        ...(completion
+          ? [{ key: completion.key, value: 'done', ttlSeconds: completion.ttlSeconds }]
+          : []),
+      ],
+    );
+
+    return share;
+  });
+}
+
+function currentCivilDate(timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const value = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
+
+export async function revokeSharedCountdown(
+  token: string,
+  id: string,
+  completion?: MutationCompletion,
+): Promise<UserData | null> {
+  const redis = getRedis();
+
+  return withRedisLock(redis, `user:${token}`, async (lease) => {
+    const user = await readUser(redis, token);
+
+    if (!user) return null;
+    if (completion && (await redis.get(completion.key))) return user;
+    const share = user.sharedCountdowns?.find((candidate) => candidate.id === id);
+
+    if (!share) throw new Error('Shared countdown not found');
+    user.sharedCountdowns = user.sharedCountdowns?.filter(
+      (candidate) => candidate.id !== id,
+    );
+    await commitIfLeasesOwned(
+      redis,
+      [lease],
+      [
+        { key: `user:${token}`, value: user },
+        ...(completion
+          ? [{ key: completion.key, value: 'done', ttlSeconds: completion.ttlSeconds }]
+          : []),
+      ],
+      [`share:${share.key}`],
+    );
+
+    return user;
+  });
 }
 
 export async function addCustomTheme(
@@ -508,6 +729,14 @@ export async function deleteCustomTheme(
 
       if (user.theme === themeId) {
         user.theme = 'default';
+      }
+
+      if (user.automaticProfiles) {
+        (['day', 'evening', 'night'] as const).forEach((slot) => {
+          if (user.automaticProfiles?.[slot].theme === themeId) {
+            user.automaticProfiles[slot].theme = undefined;
+          }
+        });
       }
     },
     completion,
@@ -654,6 +883,8 @@ export async function removeGoogleAccount(
         ({ accountEmail }) => accountEmail !== account.email,
       );
       user.selectedEventIds = user.selectedEventIds.filter((id) => !removedIds.has(id));
+
+      return pruneEventMetadata(user);
     }
   });
 }
@@ -681,6 +912,8 @@ export async function updateCachedCalEvents(
       const availableIds = new Set(availableEvents.map(({ id }) => id));
 
       user.selectedEventIds = user.selectedEventIds.filter((id) => availableIds.has(id));
+
+      return pruneEventMetadata(user);
     },
     completion,
   );
@@ -710,6 +943,8 @@ export async function updateSelectedEvents(
     }
 
     user.selectedEventIds = [...new Set(eventIds)];
+
+    return pruneEventMetadata(user);
   });
 }
 
@@ -726,7 +961,7 @@ export async function createInviteCode(code: string, maxUses = 10): Promise<void
 
 async function mutateUser(
   token: string,
-  mutation: (user: UserData) => void,
+  mutation: (user: UserData) => void | string[],
   completion?: MutationCompletion,
 ): Promise<UserData | null> {
   const redis = getRedis();
@@ -745,7 +980,7 @@ async function mutateUser(
     const wallpaperKey = user.wallpaperKey ?? generateUUID();
 
     user.wallpaperKey = wallpaperKey;
-    mutation(user);
+    const deletes = mutation(user) ?? [];
 
     const sets: RedisFencedSet[] = [
       { key: `user:${token}`, value: user },
@@ -760,10 +995,32 @@ async function mutateUser(
       });
     }
 
-    await commitIfLeasesOwned(redis, [lease], sets);
+    await commitIfLeasesOwned(redis, [lease], sets, deletes);
 
     return user;
   });
+}
+
+/** Removes metadata that could otherwise point at deleted/deselected events. */
+function pruneEventMetadata(user: UserData): string[] {
+  const validIds = new Set([
+    ...user.events.map(({ id }) => id),
+    ...user.selectedEventIds,
+  ]);
+
+  if (user.focusEventId && !validIds.has(user.focusEventId)) delete user.focusEventId;
+  user.googleCategoryOverrides = Object.fromEntries(
+    Object.entries(user.googleCategoryOverrides ?? {}).filter(([id]) => validIds.has(id)),
+  );
+  const staleShares = (user.sharedCountdowns ?? []).filter(
+    ({ eventId }) => !validIds.has(eventId),
+  );
+
+  user.sharedCountdowns = (user.sharedCountdowns ?? []).filter(({ eventId }) =>
+    validIds.has(eventId),
+  );
+
+  return staleShares.map(({ key }) => `share:${key}`);
 }
 
 async function readUser(

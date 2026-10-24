@@ -16,6 +16,11 @@ export const TELEGRAM_COMMANDS: TelegramCommand[] = [
   { command: 'url', description: 'Show the current wallpaper URL' },
   { command: 'add', description: 'Add an event with guided date choices' },
   { command: 'events', description: 'List manual events and their numbers' },
+  { command: 'today', description: 'Show tracked events due today' },
+  { command: 'week', description: 'Show tracked events due this week' },
+  { command: 'focus', description: 'Set focus event by M1 or G1 reference' },
+  { command: 'repeat', description: 'Set manual event recurrence' },
+  { command: 'category', description: 'Set a tracked event category' },
   { command: 'edit', description: 'Edit a manual event before saving changes' },
   {
     command: 'eventcount',
@@ -28,6 +33,13 @@ export const TELEGRAM_COMMANDS: TelegramCommand[] = [
   { command: 'profile', description: 'Calibrate lock-screen spacing' },
   { command: 'timezone', description: 'Set time zone: Area/City' },
   { command: 'theme', description: 'List, select, add, or delete themes' },
+  { command: 'living', description: 'Set a deterministic living overlay' },
+  { command: 'rings', description: 'Set milestone ring style' },
+  { command: 'studio', description: 'Preview and save a custom mood theme' },
+  { command: 'autoprofile', description: 'Manage day, evening, and night profiles' },
+  { command: 'share', description: 'Create a read-only countdown link' },
+  { command: 'shares', description: 'List shared countdown links' },
+  { command: 'unshare', description: 'Revoke a shared countdown by number' },
   { command: 'sync', description: 'Refresh cached Google Calendar events' },
 ];
 

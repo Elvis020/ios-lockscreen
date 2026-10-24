@@ -51,7 +51,7 @@ describe('normalizeUserData', () => {
     );
 
     expect(user).toMatchObject({
-      schemaVersion: 4,
+      schemaVersion: 5,
       token: 'legacy-token',
       timeRange: 'quarter',
       presentation: 'calendar',
@@ -66,6 +66,79 @@ describe('normalizeUserData', () => {
     });
     expect(user?.selectedEventIds).toEqual([]);
     expect(user?.customThemes).toEqual([]);
+  });
+
+  it('makes legacy manual categories and recurrence explicit', () => {
+    const user = normalizeUserData(
+      { events: [{ name: 'Payday', date: '2026-12-01' }] },
+      'owner',
+    );
+
+    expect(user?.events[0]).toMatchObject({ category: 'general', recurrence: 'none' });
+  });
+
+  it('preserves a custom profile theme while leaving absent slots unset', () => {
+    const user = normalizeUserData(
+      {
+        customThemes: [
+          {
+            id: 'my-theme',
+            background: '#101010',
+            passed: '#111111',
+            weekend: '#222222',
+            current: '#333333',
+            future: '#444444',
+            text: '#eeeeee',
+            subtext: '#aaaaaa',
+          },
+        ],
+        automaticProfiles: { enabled: true, day: { enabled: true, theme: 'my-theme' } },
+      },
+      'owner',
+    );
+
+    expect(user?.automaticProfiles?.day).toMatchObject({ theme: 'my-theme' });
+    expect(user?.automaticProfiles?.day.livingOverlay).toBeUndefined();
+    expect(user?.automaticProfiles?.day.milestoneRingStyle).toBeUndefined();
+  });
+
+  it('keeps explicit profile living and ring choices', () => {
+    const user = normalizeUserData(
+      {
+        automaticProfiles: {
+          enabled: true,
+          evening: { enabled: true, livingOverlay: 'stars', milestoneRingStyle: 'halo' },
+        },
+      },
+      'owner',
+    );
+
+    expect(user?.automaticProfiles?.evening).toMatchObject({
+      livingOverlay: 'stars',
+      milestoneRingStyle: 'halo',
+    });
+  });
+
+  it('falls back from an invalid optional profile theme', () => {
+    const user = normalizeUserData(
+      { automaticProfiles: { enabled: true, day: { enabled: true, theme: 'gone' } } },
+      'owner',
+    );
+
+    expect(user?.automaticProfiles?.day.theme).toBeUndefined();
+  });
+
+  it('normalizes malformed manual category and recurrence independently', () => {
+    const user = normalizeUserData(
+      {
+        events: [
+          { name: 'Trip', date: '2026-12-01', category: 'bad', recurrence: 'weekly' },
+        ],
+      },
+      'owner',
+    );
+
+    expect(user?.events[0]).toMatchObject({ category: 'general', recurrence: 'weekly' });
   });
 
   it('preserves a legacy custom theme that now collides with a built-in', () => {
@@ -89,7 +162,7 @@ describe('normalizeUserData', () => {
       'owner',
     );
 
-    expect(user?.schemaVersion).toBe(4);
+    expect(user?.schemaVersion).toBe(5);
     expect(user?.theme).toBe('midnight-custom');
     expect(user?.customThemes).toEqual([
       expect.objectContaining({ id: 'midnight-custom', background: '#010203' }),
