@@ -3,6 +3,7 @@ import { LOCK_SCREEN_PROFILES, PRESENTATIONS, TIME_RANGES } from '../lib/prefere
 import {
   getCalendarComposition,
   getCalendarRequiredHeight,
+  getMonthGeometry,
   getMonthGroupHeight,
   getWallpaperEventLayout,
   getWallpaperLayoutBounds,
@@ -54,7 +55,7 @@ describe('grouped calendar composition', () => {
   });
 
   it('fits the enlarged quarter grid and tightest large-clock month deterministically', () => {
-    expect(getMonthGroupHeight('medium', true)).toBeCloseTo(379.8);
+    expect(getMonthGroupHeight('medium', true, true)).toBeCloseTo(427.8);
     const quarter = getCalendarComposition(
       buildWallpaperModel({ date, timeRange: 'quarter' }),
     )!;
@@ -63,18 +64,32 @@ describe('grouped calendar composition', () => {
     )!;
 
     expect(quarter).toMatchObject({
-      top: 1140,
-      height: 720,
-      calendarTop: 1212,
-      calendarHeight: 380,
-      eventsTop: 1656,
+      top: 1116,
+      height: 768,
+      calendarTop: 1188,
+      calendarHeight: 428,
+      eventsTop: 1680,
     });
     expect(month).toMatchObject({
-      top: 1176,
-      height: 848,
-      calendarHeight: 524,
-      eventsTop: 1820,
+      top: 1140,
+      height: 920,
+      calendarHeight: 596,
+      eventsTop: 1856,
     });
+  });
+
+  it('adds vertical breathing room only to the grouped month and quarter grids', () => {
+    for (const [scale, roomyHeight, legacyHeight] of [
+      ['large', 100, 88],
+      ['large-compact', 90, 78],
+      ['medium', 52, 44],
+      ['dots', 24, 24],
+      ['dots-compact', 22, 22],
+    ] as const) {
+      expect(getMonthGeometry(scale, true).cellHeight).toBe(roomyHeight);
+      expect(getMonthGeometry(scale).cellHeight).toBe(legacyHeight);
+      expect(getMonthGeometry(scale, true).dot).toEqual(getMonthGeometry(scale).dot);
+    }
   });
 
   it('does not opt unrelated ranges or presentations into the new composition', () => {

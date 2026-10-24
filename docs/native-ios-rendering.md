@@ -23,6 +23,11 @@ larger and brighter, and event countdowns use clearer text. Event lines stay 3px
 thin. Two event rows are shown at most, followed by `+N more` when needed; printed
 event dates and the redundant quarter heading stay hidden.
 
+Month rows use a 100px pitch (90px with the large clock), and quarter rows use
+52px, without enlarging the dots. Native dot and event-ring origins align to whole
+pixels, retaining normal circle antialiasing. Week and the legacy year/rolling
+layouts keep their spacing.
+
 These refinements change server-side drawing data only. The scene stays at version 1:
 existing Scriptable code and native Shortcut URLs do not need changing. After the
 deployment, rerun the same Shortcut to fetch the revised layout.

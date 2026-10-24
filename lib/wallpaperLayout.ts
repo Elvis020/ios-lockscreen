@@ -156,7 +156,7 @@ export function getCalendarRequiredHeight(
   if (isGroupedCalendarLayout(model) && model.timeRange !== 'week') {
     const { scale } = getMonthCollectionGeometry(model);
 
-    return Math.ceil(getMonthGroupHeight(scale, model.monthGroups.length > 1));
+    return Math.ceil(getMonthGroupHeight(scale, model.monthGroups.length > 1, true));
   }
 
   if (model.timeRange === 'week' || model.timeRange === 'rolling14') {
@@ -272,7 +272,7 @@ export function getMonthCollectionGeometry(model: WallpaperModel) {
   };
 }
 
-export function getMonthGeometry(scale: MonthScale) {
+export function getMonthGeometry(scale: MonthScale, roomy = false) {
   const large = scale === 'large';
   const largeCompact = scale === 'large-compact';
   const dots = scale === 'dots' || scale === 'dots-compact';
@@ -287,10 +287,20 @@ export function getMonthGeometry(scale: MonthScale) {
             size: dotsCompact ? 14 : CALENDAR_DOT_GEOMETRY.year.size,
           }
         : CALENDAR_DOT_GEOMETRY.quarter;
+  const baseCellHeight = large
+    ? 88
+    : largeCompact
+      ? 78
+      : dotsCompact
+        ? 22
+        : dots
+          ? 24
+          : 44;
+  const extraRowSpacing = roomy && !dots ? (large || largeCompact ? 12 : 8) : 0;
 
   return {
     dot,
-    cellHeight: large ? 88 : largeCompact ? 78 : dotsCompact ? 22 : dots ? 24 : 44,
+    cellHeight: baseCellHeight + extraRowSpacing,
     paddingY: large ? 22 : largeCompact ? 10 : dotsCompact ? 6 : dots ? 12 : 16,
     paddingX: large ? 20 : largeCompact ? 16 : dotsCompact ? 8 : dots ? 10 : 12,
     labelGap: large ? 16 : largeCompact ? 8 : dotsCompact ? 4 : dots ? 8 : 12,
@@ -300,8 +310,12 @@ export function getMonthGeometry(scale: MonthScale) {
   };
 }
 
-export function getMonthGroupHeight(scale: MonthScale, showLabel: boolean): number {
-  const geometry = getMonthGeometry(scale);
+export function getMonthGroupHeight(
+  scale: MonthScale,
+  showLabel: boolean,
+  roomy = false,
+): number {
+  const geometry = getMonthGeometry(scale, roomy);
   const labelHeight = showLabel ? geometry.labelSize * 1.2 + geometry.labelGap : 0;
   const weekdayHeight = geometry.showWeekdays ? geometry.weekdaySize * 1.2 + 7 : 0;
 

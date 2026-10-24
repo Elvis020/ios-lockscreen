@@ -556,7 +556,7 @@ function MonthGroup({
   readable: boolean;
 }): ReactElement {
   const rows = chunk(group.cells, 7);
-  const geometry = getMonthGeometry(scale);
+  const geometry = getMonthGeometry(scale, readable);
 
   return (
     <div

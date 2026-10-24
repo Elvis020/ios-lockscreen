@@ -171,11 +171,11 @@ function addMonths(
   bottom: number,
 ): void {
   const collection = getMonthCollectionGeometry(model);
-  const geometry = getMonthGeometry(collection.scale);
+  const geometry = getMonthGeometry(collection.scale, true);
   const showLabel = model.monthGroups.length > 1;
   const labelHeight = showLabel ? geometry.labelSize * 1.2 + geometry.labelGap : 0;
   const weekdayHeight = geometry.weekdaySize * 1.2;
-  const groupHeight = getMonthGroupHeight(collection.scale, showLabel);
+  const groupHeight = getMonthGroupHeight(collection.scale, showLabel, true);
   const groupWidth = (CONTENT_WIDTH * collection.widthPercent) / 100;
   const groupGap =
     collection.columns === 1
@@ -253,6 +253,10 @@ function addDot(
   position: { x: number; y: number },
   geometry: { size: number; eventRingGap: number; eventRingWidth: number },
 ): void {
+  // Snap once so the fill and both ring layers share the same pixel-aligned center.
+  const x = Math.round(position.x);
+  const y = Math.round(position.y);
+
   if (cell.event) {
     for (const [offset, fill] of [
       [
@@ -263,8 +267,8 @@ function addDot(
     ] as const) {
       scene.commands.push({
         kind: 'circle',
-        x: position.x - offset,
-        y: position.y - offset,
+        x: x - offset,
+        y: y - offset,
         diameter: geometry.size + offset * 2,
         fill,
       });
@@ -273,7 +277,8 @@ function addDot(
 
   scene.commands.push({
     kind: 'circle',
-    ...position,
+    x,
+    y,
     diameter: geometry.size,
     fill: cell.current
       ? theme.current

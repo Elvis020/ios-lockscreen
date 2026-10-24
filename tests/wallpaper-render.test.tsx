@@ -150,6 +150,32 @@ describe('wallpaper renderer', () => {
     expect(text).not.toContain('Q4 2026');
   });
 
+  it('spaces grouped PNG dot rows while preserving legacy Progress spacing', () => {
+    for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+      for (const timeRange of ['month', 'quarter'] as const) {
+        for (const presentation of ['calendar', 'hybrid', 'progress'] as const) {
+          const model = buildWallpaperModel({
+            date,
+            timeRange,
+            presentation,
+            lockScreenProfile,
+          });
+          const legacyHeight =
+            timeRange === 'quarter' ? 44 : lockScreenProfile === 'standard' ? 88 : 78;
+          const extraSpacing = timeRange === 'quarter' ? 8 : 12;
+          const expectedHeight =
+            legacyHeight + (presentation === 'progress' ? 0 : extraSpacing);
+          const { styles } = inspectCanvas(WallpaperCanvas({ model }));
+          const cells = styles.filter(
+            ({ width, height }) => width === '14.285%' && height === expectedHeight,
+          );
+
+          expect(cells).toHaveLength(timeRange === 'quarter' ? 126 : 42);
+        }
+      }
+    }
+  });
+
   it('uses minimal header copy and removes the quarter heading', () => {
     const progress = buildWallpaperModel({
       date,

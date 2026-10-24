@@ -61,6 +61,9 @@ describe('native wallpaper scene', () => {
             expect(command.y + height).toBeLessThanOrEqual(bounds.contentBottom);
 
             if (command.kind === 'circle') {
+              expect(
+                [command.x, command.y, command.diameter].every(Number.isInteger),
+              ).toBe(true);
               expect(command.y).toBeGreaterThanOrEqual(bounds.calendarTop as number);
               expect(command.y + height).toBeLessThanOrEqual(
                 bounds.calendarBottom as number,
@@ -115,7 +118,57 @@ describe('native wallpaper scene', () => {
       color: model.theme.text,
       align: 'right',
     });
-    expect(getMonthGeometry('medium').cellHeight).toBe(44);
+    expect(getMonthGeometry('medium', true).cellHeight).toBe(52);
+  });
+
+  it('uses the roomier row pitch without changing dot size', () => {
+    for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+      for (const timeRange of ['month', 'quarter'] as const) {
+        for (const presentation of ['calendar', 'hybrid'] as const) {
+          const model = buildWallpaperModel({
+            date,
+            timeRange,
+            presentation,
+            lockScreenProfile,
+          });
+          const size =
+            timeRange === 'quarter' ? 32 : lockScreenProfile === 'standard' ? 68 : 64;
+          const pitch =
+            timeRange === 'quarter' ? 52 : lockScreenProfile === 'standard' ? 100 : 90;
+          const dots = buildNativeWallpaperScene(model).commands.filter(
+            (command) => command.kind === 'circle' && command.diameter === size,
+          );
+          const rows = [...new Set(dots.map(({ y }) => y))].sort((a, b) => a - b);
+
+          expect(dots).toHaveLength(timeRange === 'quarter' ? 92 : 31);
+          expect(rows.length).toBeGreaterThan(1);
+
+          for (let index = 1; index < rows.length; index += 1) {
+            expect(rows[index] - rows[index - 1]).toBe(pitch);
+          }
+        }
+      }
+    }
+  });
+
+  it('keeps both pixel-aligned event rings concentric with their dot', () => {
+    const scene = buildNativeWallpaperScene(buildWallpaperModel({ date, publicEvents }));
+    const index = scene.commands.findIndex(
+      (command) => command.kind === 'circle' && command.diameter === 42,
+    );
+    const layers = scene.commands
+      .slice(index, index + 3)
+      .filter((command) => command.kind === 'circle');
+
+    expect(layers.map(({ diameter }) => diameter)).toEqual([42, 38, 32]);
+    const center = { x: layers[0].x + 21, y: layers[0].y + 21 };
+
+    for (const layer of layers) {
+      expect({
+        x: layer.x + layer.diameter / 2,
+        y: layer.y + layer.diameter / 2,
+      }).toEqual(center);
+    }
   });
 
   it('keeps event markers separated even on adjacent event days', () => {
@@ -133,7 +186,7 @@ describe('native wallpaper scene', () => {
       (command) => command.kind === 'circle' && command.diameter === outerDiameter,
     );
 
-    expect(outerDiameter).toBeLessThan(getMonthGeometry('medium').cellHeight);
+    expect(outerDiameter).toBeLessThan(getMonthGeometry('medium', true).cellHeight);
     expect(rings).toHaveLength(2);
     expect(rings[0].y).toBe(rings[1].y);
     expect(Math.abs(rings[1].x - rings[0].x)).toBeGreaterThan(outerDiameter);
