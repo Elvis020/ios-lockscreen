@@ -1,8 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeUserData } from '../lib/userSchema';
 import { buildWallpaperModel } from '../lib/wallpaperModel';
+import { dateAtPeriodDay } from '../lib/periodCalculator';
 
 describe('buildWallpaperModel', () => {
+  it.each(['week', 'month', 'quarter', 'rolling14', 'year'] as const)(
+    'keeps %s cells consecutive from day one without calendar spacer cells',
+    (timeRange) => {
+      const model = buildWallpaperModel({
+        date: new Date('2028-02-15T12:00:00Z'),
+        timeRange,
+      });
+
+      expect(model.cells).toHaveLength(model.period.totalDays);
+      expect(model.cells[0].date).toBe(model.period.startDate);
+      expect(model.cells.at(-1)?.date).toBe(model.period.endDate);
+      expect(model.cells.map(({ date }) => date)).toEqual(
+        Array.from({ length: model.period.totalDays }, (_, index) =>
+          dateAtPeriodDay(model.period.startDate, index + 1),
+        ),
+      );
+    },
+  );
   it('uses structured event names without delimiter parsing', () => {
     const user = normalizeUserData(
       {

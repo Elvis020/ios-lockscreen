@@ -86,7 +86,7 @@ still mark the calendar. Changes appear on the next wallpaper refresh.
 
 Agenda and Minimal views have been removed. Saved accounts using either fall back
 to Calendar without losing events or their wallpaper URL. The Minimal color theme
-is still available. Year uses a compact three-column calendar with event timers;
+is still available. Year uses a continuous twenty-column dot field with event timers;
 older saved Year/progress settings render the same way.
 
 Run `npm run telegram:configure-commands` again after deploying this update to add

@@ -105,7 +105,6 @@ describe('Scriptable native wallpaper adapter (simulated runtime)', () => {
       expect(harness.draw.opaque).toBe(true);
       expect(harness.nativeGlobals.Font.systemFont).toHaveBeenCalled();
       expect(harness.nativeGlobals.Font.mediumSystemFont).toHaveBeenCalled();
-      expect(harness.nativeGlobals.Font.semiboldSystemFont).toHaveBeenCalled();
       expect(harness.draw.fillEllipse).toHaveBeenCalled();
       expect(harness.draw.fillPath).toHaveBeenCalled();
       expect(
@@ -140,6 +139,9 @@ describe('Scriptable native wallpaper adapter (simulated runtime)', () => {
             harness.run();
 
             expect(harness.output).toHaveBeenCalledOnce();
+            if (presentation === 'countdown') {
+              expect(harness.nativeGlobals.Font.semiboldSystemFont).toHaveBeenCalled();
+            }
 
             const empty = runtime(
               buildNativeWallpaperScene(

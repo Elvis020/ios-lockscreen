@@ -46,22 +46,30 @@ The temporary invite-admin endpoint remains available for initial setup. Keep `A
 
 ## Lock-screen layout calibration
 
-Wallpaper generation remains fixed at 1284×2778 for compatibility. The standard profile reserves roughly the top third for the clock and widgets and the bottom quarter for notifications. The large-clock profile moves the content start lower while retaining the same conservative bottom boundary.
+Wallpaper generation remains fixed at 1284×2778 for compatibility. Dot fields begin
+at y=800 in Standard and y=1000 in Large clock, below the estimated native time.
+The generated header begins 80px before that first fill-dot; its grid envelope
+includes an 8px inset for marker rings. Countdown retains its existing 920/1120px
+content bands. All layouts keep the same 2080px content bottom above notifications.
 
 These positions are calibration defaults, not device detection or universal safe-area claims. iOS can crop or zoom a wallpaper after download, and clock, widget, text-size, and notification choices vary. Use the generated mock-overlay previews as a first check, then verify the raw PNG on the actual target lock screen. Wallpaper settings also appear only after the iOS Shortcut fetches a fresh image; the application cannot force that refresh.
 
 ## Dots-first event layout
 
-The wallpaper keeps circular day markers and deliberately limits text. The quarter
-view has no quarter/year heading; its full month names identify the grid. Quarter
-calendar and hybrid views show a centered, date-driven summary such as
-`26% complete · 68 days left`, without an overview timer bar. Other presentations use
-a modest single-line heading without a progress/date subtitle. Week, month, and
-quarter grids retain weekday labels; the denser year grid omits them. Year uses
-the same centered caption and event block as Quarter, without a year title or
-overview bar. Progress uses the compact summary header so events fit in every
-range. The native iOS
-clock is not part of the generated wallpaper.
+The wallpaper is a continuous progress-dot matrix, not a conventional calendar.
+Both renderers draw `model.cells` in chronological row-major order: 7 dots for a
+week, 14 for rolling 14 days, 28–31 for a month, 90–92 for a quarter and 365–366 for
+a year. Columns are 7/7/7/10/20 respectively. There are no month panels, weekday
+headings, day numbers, or spacer day cells; the final partial row stays left-aligned.
+Colors still distinguish elapsed weekdays/weekends, today and future days. Every
+tracked event can add its ring even when its event row is hidden by the list limit.
+
+Quarter/Year use a centered summary such as `26% complete · 68 days left`, without
+an overview bar or separate quarter/year title. Other range headings and event
+countdowns remain. Progress uses the compact summary header; Countdown retains
+its featured-event display. The real lock-screen clock is never baked into the
+wallpaper. Mock overlays are visual aids without a simulated widget row, not proof
+of a particular phone's font, widget or crop behavior.
 
 Event dates remain stored for sorting, countdowns, and calendar markers but are not
 printed beside events. Each displayed event has a single name/countdown line and a
@@ -99,7 +107,7 @@ still private data. Native responses and errors always disable browser/CDN cachi
 Only the existing read-only wallpaper key is accepted for personalized native data;
 legacy management-token wallpaper URLs continue to work for PNG only. Supported
 native combinations cover all five ranges, four presentations and two clock profiles.
-Year uses three columns and four compact rows of months; rolling 14 days uses two rows of seven dots.
+Year uses a single twenty-column matrix; rolling 14 days uses two rows of seven dots.
 The existing scene-v1 adapter remains compatible. Oversized public marker scenes
 return a private, non-cacheable 422 rather than dropping markers. Unknown `format`
 values retain the existing PNG behavior for compatibility.
@@ -107,9 +115,9 @@ values retain the existing PNG behavior for compatibility.
 Both renderers use shared geometry and event-cap calculations in `wallpaperLayout.ts`.
 Calendar/Hybrid/Progress content is top-anchored below the clock; compact event slots have
 independent preferred positions (1680px standard, 1772px large-clock) and move down
-when a grid needs more clearance or move up to fit a taller event list. Quarter cells can expand vertically to use
-the available band. Year trims empty trailing weeks and uses a fixed small gap
-between each quarter row instead of stretching month blocks apart.
+when a grid needs more clearance or move up to fit a taller event list. Shared
+integer-pixel positions fix each range/profile's size and pitch independently of
+presentation and event count; no spread-to-fill rows or month-group geometry remain.
 The native scene is interpreted on the iPhone by a strict, network-free Scriptable
 script using the native Font APIs. The script returns PNG bytes as base64 text to
 Shortcuts without saving files or uploading font data. The original PNG pathway and

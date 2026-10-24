@@ -7,7 +7,7 @@ import {
   TIME_RANGES,
 } from '../lib/preferences';
 import { buildWallpaperModel } from '../lib/wallpaperModel';
-import { getMonthCollectionLayout } from '../lib/wallpaperLayout';
+import { getContinuousDotGridLayout, FIRST_DOT_TOP } from '../lib/wallpaperLayout';
 import {
   CALENDAR_DOT_GEOMETRY,
   createWallpaperImageResponse,
@@ -120,18 +120,20 @@ describe('wallpaper renderer', () => {
           const bounds = getWallpaperLayoutBounds(model);
           const profileBand = LOCK_SCREEN_CONTENT_BANDS[lockScreenProfile];
 
-          expect(bounds.contentTop).toBeGreaterThanOrEqual(profileBand.top);
+          const expectedTop =
+            presentation === 'countdown'
+              ? profileBand.top
+              : FIRST_DOT_TOP[lockScreenProfile] - 80;
+
+          expect(bounds.contentTop).toBe(expectedTop);
           expect(bounds.contentBottom).toBeLessThanOrEqual(profileBand.bottom);
-          expect(bounds.presentationTop).toBeGreaterThanOrEqual(profileBand.top);
+          expect(bounds.presentationTop).toBeGreaterThanOrEqual(expectedTop);
           expect(bounds.presentationBottom).toBeLessThanOrEqual(profileBand.bottom);
 
           if (bounds.calendarTop !== undefined && bounds.calendarBottom !== undefined) {
-            const compact = presentation === 'hybrid';
             const availableHeight = bounds.calendarBottom - bounds.calendarTop;
 
-            expect(getCalendarRequiredHeight(model, compact)).toBeLessThanOrEqual(
-              availableHeight,
-            );
+            expect(getCalendarRequiredHeight(model)).toBeLessThanOrEqual(availableHeight);
           }
 
           if (bounds.eventsTop !== undefined && bounds.eventsBottom !== undefined) {
@@ -166,7 +168,7 @@ describe('wallpaper renderer', () => {
       expect(geometry.eventRingWidth).toBeGreaterThanOrEqual(2);
     }
 
-    expect(CALENDAR_DOT_GEOMETRY.quarter.size).toBe(32);
+    expect(CALENDAR_DOT_GEOMETRY.quarter.size).toBe(64);
     expect(CALENDAR_DOT_GEOMETRY.year.size).toBeGreaterThanOrEqual(14);
   });
 
@@ -183,9 +185,7 @@ describe('wallpaper renderer', () => {
 
     expect(styles.some(({ marginTop }) => marginTop === 8)).toBe(true);
     expect(styles.some(({ marginTop }) => marginTop === 24)).toBe(true);
-    expect(
-      styles.some(({ fontSize, color }) => fontSize === 22 && color === model.theme.text),
-    ).toBe(true);
+    expect(styles.some(({ fontSize }) => fontSize === 34)).toBe(true);
     expect(
       styles.some(({ fontSize, color }) => fontSize === 30 && color === model.theme.text),
     ).toBe(true);
@@ -195,7 +195,7 @@ describe('wallpaper renderer', () => {
     expect(text).not.toContain('Q4 2026');
   });
 
-  it('spaces grouped PNG dot rows consistently across calendar presentations', () => {
+  it('places every PNG dot using the shared continuous sequence without blank day cells', () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
       for (const timeRange of ['month', 'quarter'] as const) {
         for (const presentation of ['calendar', 'hybrid', 'progress'] as const) {
@@ -205,17 +205,18 @@ describe('wallpaper renderer', () => {
             presentation,
             lockScreenProfile,
           });
-          const bounds = getWallpaperLayoutBounds(model);
-          const expectedHeight = getMonthCollectionLayout(
-            model,
-            bounds.calendarBottom! - bounds.calendarTop!,
-          ).geometry.cellHeight;
+          const grid = getContinuousDotGridLayout(model);
           const { styles } = inspectCanvas(WallpaperCanvas({ model }));
-          const cells = styles.filter(
-            ({ width, height }) => width === '14.285%' && height === expectedHeight,
+          const positions = styles.filter(
+            ({ position, left, top }) =>
+              position === 'absolute' &&
+              grid.positions.some((point) => point.x === left && point.y === top),
           );
 
-          expect(cells).toHaveLength(timeRange === 'quarter' ? 126 : 42);
+          expect(positions.map(({ left, top }) => ({ x: left, y: top }))).toEqual(
+            grid.positions,
+          );
+          expect(positions).toHaveLength(model.cells.length);
         }
       }
     }
@@ -313,7 +314,7 @@ describe('wallpaper renderer', () => {
     }
   });
 
-  it('restores weekday orientation and centers the quarter progress summary', () => {
+  it('keeps the centered quarter summary without weekday labels', () => {
     const model = buildWallpaperModel({
       date: new Date('2026-10-24T12:00:00Z'),
       timeRange: 'quarter',
@@ -321,7 +322,7 @@ describe('wallpaper renderer', () => {
     const { text, styles } = inspectCanvas(WallpaperCanvas({ model }));
 
     expect(text).toContain('26% complete · 68 days left');
-    expect(text.match(/S M T W T F S/g)).toHaveLength(3);
+    expect(text).not.toMatch(/S M T W T F S/);
     expect(text).not.toContain('Q4 2026');
     expect(
       styles.some(
@@ -331,13 +332,16 @@ describe('wallpaper renderer', () => {
     ).toBe(true);
   });
 
-  it('keeps full month names on the multi-month dot grids', () => {
+  it('removes month panels and begins the flat dots directly below the clock', () => {
     const model = buildWallpaperModel({ date, timeRange: 'quarter' });
     const { text } = inspectCanvas(WallpaperCanvas({ model }));
 
-    expect(text).toContain('October');
-    expect(text).toContain('November');
-    expect(text).toContain('December');
+    expect(text).not.toContain('October');
+    expect(text).not.toContain('November');
+    expect(text).not.toContain('December');
+    const grid = getContinuousDotGridLayout(model);
+
+    expect(grid.top + grid.positions[0].y).toBe(FIRST_DOT_TOP.standard);
   });
 
   it('matches the mock iOS date to the generated calendar date', () => {

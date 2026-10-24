@@ -6,21 +6,14 @@ import {
   CONTENT_RIGHT,
   getCalendarComposition,
   getCountdownComposition,
-  getDayCardGeometry,
-  getDayRowsLayout,
-  getMonthCollectionLayout,
-  getMonthGeometry,
+  getContinuousDotGridLayout,
   getWallpaperEventLayout,
   getWallpaperHeaderCopy,
-  getWallpaperLayoutBounds,
   HEADER_HEIGHT,
   HEADER_TO_PRESENTATION_GAP,
   LOCK_SCREEN_CONTENT_BANDS,
-  isGroupedCalendarLayout,
   WALLPAPER_HEIGHT,
   WALLPAPER_WIDTH,
-  WEEKDAY_LABELS,
-  type MonthScale,
   type CalendarComposition,
   type WallpaperEventLayout,
 } from './wallpaperLayout';
@@ -29,7 +22,6 @@ import {
   type DisplayEvent,
   type WallpaperCell,
   type WallpaperModel,
-  type WallpaperMonthGroup,
 } from './wallpaperModel';
 
 export {
@@ -195,7 +187,7 @@ function GroupedCalendar({
       }}
     >
       <div style={{ display: 'flex', height: composition.calendarHeight, flexShrink: 0 }}>
-        <CalendarVisual model={model} compact={model.presentation === 'hybrid'} />
+        <CalendarVisual model={model} />
       </div>
       <div
         style={{
@@ -335,7 +327,7 @@ function Progress({ model }: { model: WallpaperModel }): ReactElement {
       <div style={columnStyle}>
         <PeriodProgress model={model} large />
         <div style={{ display: 'flex', flex: 1, minHeight: 0, marginTop: 30 }}>
-          <MonthCollection model={model} groups={model.monthGroups} />
+          <CalendarVisual model={model} />
         </div>
       </div>
     );
@@ -379,289 +371,38 @@ function Minimal({ model }: { model: WallpaperModel }): ReactElement {
   );
 }
 
-function CalendarVisual({
-  model,
-  compact = false,
-}: {
-  model: WallpaperModel;
-  compact?: boolean;
-}): ReactElement {
-  if (model.timeRange === 'week' || model.timeRange === 'rolling14') {
-    return <DayRows model={model} compact={compact} />;
-  }
-
-  return <MonthCollection model={model} groups={model.monthGroups} compact={compact} />;
-}
-
-function DayRows({
-  model,
-  compact,
-}: {
-  model: WallpaperModel;
-  compact: boolean;
-}): ReactElement {
-  const rows = chunk(model.cells, 7);
-  const bounds = getWallpaperLayoutBounds(model);
-  const availableHeight =
-    (bounds.calendarBottom ?? bounds.presentationBottom) -
-    (bounds.calendarTop ?? bounds.presentationTop);
-  const { rowGap } = getDayRowsLayout(model, availableHeight, compact);
+function CalendarVisual({ model }: { model: WallpaperModel }): ReactElement {
+  const grid = getContinuousDotGridLayout(model);
 
   return (
     <div
       style={{
-        ...columnStyle,
-        justifyContent: 'flex-start',
-        gap: rowGap,
-      }}
-    >
-      {rows.map((row, rowIndex) => (
-        <div
-          key={`row-${rowIndex}`}
-          style={{
-            display: 'flex',
-            width: '100%',
-            justifyContent: 'space-between',
-          }}
-        >
-          {row.map((cell) => (
-            <DayCard
-              key={cell.date}
-              cell={cell}
-              theme={model.theme}
-              compact={compact}
-              readable={isGroupedCalendarLayout(model)}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function DayCard({
-  cell,
-  theme,
-  compact,
-  readable,
-}: {
-  cell: WallpaperCell;
-  theme: WallpaperTheme;
-  compact: boolean;
-  readable: boolean;
-}): ReactElement {
-  const geometry = getDayCardGeometry(compact);
-
-  return (
-    <div
-      style={{
-        width: geometry.width,
-        height: geometry.height,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          color: readable ? theme.text : theme.subtext,
-          fontSize: geometry.labelSize,
-          lineHeight: 1.2,
-          fontWeight: 650,
-          textTransform: 'uppercase',
-        }}
-      >
-        {cell.weekdayLabel}
-      </div>
-      <div
-        style={{
-          marginTop: geometry.labelGap,
-          display: 'flex',
-        }}
-      >
-        <CalendarDot
-          cell={cell}
-          theme={theme}
-          size={geometry.size}
-          eventRingGap={geometry.eventRingGap}
-          eventRingWidth={geometry.eventRingWidth}
-        />
-      </div>
-    </div>
-  );
-}
-
-function MonthCollection({
-  model,
-  groups,
-}: {
-  model: WallpaperModel;
-  groups: WallpaperMonthGroup[];
-  compact?: boolean;
-}): ReactElement {
-  const groupCount = groups.length;
-  const bounds = getWallpaperLayoutBounds(model);
-  const availableHeight =
-    (bounds.calendarBottom ?? bounds.presentationBottom) -
-    (bounds.calendarTop ?? bounds.presentationTop);
-  const layout = getMonthCollectionLayout(model, availableHeight);
-
-  return (
-    <div
-      style={{
-        display: 'flex',
+        position: 'relative',
         width: '100%',
-        height: '100%',
-        flexDirection: 'column',
-        gap: layout.rowGap,
+        height: grid.height,
+        display: 'flex',
+        flexShrink: 0,
       }}
     >
-      {chunk(groups, layout.columns).map((row, index) => (
+      {model.cells.map((cell, index) => (
         <div
-          key={`month-collection-row-${index}`}
+          key={cell.date}
           style={{
             display: 'flex',
-            width: '100%',
-            height: layout.rowLayouts[index].height,
-            flexShrink: 0,
-            justifyContent: layout.columns === 1 ? 'center' : 'space-between',
+            position: 'absolute',
+            left: grid.positions[index].x,
+            top: grid.positions[index].y,
           }}
         >
-          {row.map((group) => (
-            <MonthGroup
-              key={group.id}
-              group={group}
-              theme={model.theme}
-              width={`${layout.widthPercent}%`}
-              scale={layout.scale}
-              showLabel={groupCount > 1}
-              readable={isGroupedCalendarLayout(model)}
-              geometry={layout.geometry}
-              weeks={layout.rowLayouts[index].weeks}
-            />
-          ))}
+          <CalendarDot
+            cell={cell}
+            theme={model.theme}
+            size={grid.size}
+            eventRingGap={grid.eventRingGap}
+            eventRingWidth={grid.eventRingWidth}
+          />
         </div>
       ))}
-    </div>
-  );
-}
-
-function MonthGroup({
-  group,
-  theme,
-  width,
-  scale,
-  showLabel,
-  readable,
-  geometry,
-  weeks,
-}: {
-  group: WallpaperMonthGroup;
-  theme: WallpaperTheme;
-  width: string;
-  scale: MonthScale;
-  showLabel: boolean;
-  readable: boolean;
-  geometry: ReturnType<typeof getMonthGeometry>;
-  weeks: number;
-}): ReactElement {
-  const rows = chunk(group.cells.slice(0, weeks * 7), 7);
-
-  return (
-    <div
-      style={{
-        width,
-        display: 'flex',
-        flexDirection: 'column',
-        padding: `${geometry.paddingY}px ${geometry.paddingX}px`,
-      }}
-    >
-      {showLabel ? (
-        <div
-          style={{
-            display: 'flex',
-            marginBottom: geometry.labelGap,
-            color: theme.text,
-            fontSize: geometry.labelSize,
-            lineHeight: 1.2,
-            fontWeight: 650,
-          }}
-        >
-          {group.label}
-        </div>
-      ) : null}
-      {geometry.showWeekdays ? (
-        <div style={{ display: 'flex', width: '100%', marginBottom: 7 }}>
-          {WEEKDAY_LABELS.map((label, index) => (
-            <div
-              key={`${label}-${index}`}
-              style={{
-                width: '14.285%',
-                display: 'flex',
-                justifyContent: 'center',
-                color: readable ? theme.text : theme.subtext,
-                fontSize: geometry.weekdaySize,
-                lineHeight: 1.2,
-                fontWeight: 650,
-              }}
-            >
-              {label}
-            </div>
-          ))}
-        </div>
-      ) : null}
-      {rows.map((row, rowIndex) => (
-        <div key={`month-row-${rowIndex}`} style={{ display: 'flex', width: '100%' }}>
-          {row.map((cell, cellIndex) => (
-            <MonthCell
-              key={cell?.date ?? `blank-${rowIndex}-${cellIndex}`}
-              cell={cell}
-              theme={theme}
-              height={geometry.cellHeight}
-              scale={scale}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function MonthCell({
-  cell,
-  theme,
-  height,
-  scale,
-}: {
-  cell: WallpaperCell | null;
-  theme: WallpaperTheme;
-  height: number;
-  scale: MonthScale;
-}): ReactElement {
-  const geometry = getMonthGeometry(scale).dot;
-
-  return (
-    <div
-      style={{
-        width: '14.285%',
-        height,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-      }}
-    >
-      {cell ? (
-        <CalendarDot
-          cell={cell}
-          theme={theme}
-          size={geometry.size}
-          eventRingGap={geometry.eventRingGap}
-          eventRingWidth={geometry.eventRingWidth}
-        />
-      ) : null}
     </div>
   );
 }
@@ -1016,7 +757,7 @@ function MockIosOverlay({ model }: { model: WallpaperModel }): ReactElement {
       <div
         style={{
           position: 'absolute',
-          top: 170,
+          top: 320,
           left: 0,
           width: '100%',
           display: 'flex',
@@ -1024,45 +765,20 @@ function MockIosOverlay({ model }: { model: WallpaperModel }): ReactElement {
           alignItems: 'center',
         }}
       >
-        <div style={{ display: 'flex', fontSize: 30, fontWeight: 600 }}>{dateLabel}</div>
+        <div style={{ display: 'flex', fontSize: 50, lineHeight: 1.2, fontWeight: 600 }}>
+          {dateLabel}
+        </div>
         <div
           style={{
             display: 'flex',
-            marginTop: 8,
-            fontSize: 176,
+            marginTop: 22,
+            fontSize: model.lockScreenProfile === 'large-clock' ? 480 : 286,
             fontWeight: 300,
             letterSpacing: -7,
             lineHeight: 1,
           }}
         >
           9:41
-        </div>
-        <div
-          style={{
-            display: 'flex',
-            gap: 20,
-            marginTop: 44,
-          }}
-        >
-          {[0, 1].map((item) => (
-            <div
-              key={item}
-              style={{
-                width: 222,
-                height: 112,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: '2px solid rgba(255,255,255,0.35)',
-                borderRadius: 28,
-                backgroundColor: 'rgba(255,255,255,0.08)',
-                color: 'rgba(255,255,255,0.7)',
-                fontSize: 21,
-              }}
-            >
-              Widget
-            </div>
-          ))}
         </div>
       </div>
       <div

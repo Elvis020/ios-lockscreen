@@ -19,6 +19,7 @@ Calendar Lockscreen turns your calendar and upcoming events into a live wallpape
 ## ✨ What can it do?
 
 - Choose week, month, quarter, rolling 14-day, or annual time ranges.
+- Follow time passing in one continuous dot grid—no miniature month calendars.
 - Switch between calendar, countdown, progress, and hybrid presentations.
 - Start from seven presets and calibrate spacing for a standard or large clock.
 - Choose how many events appear in every view (default: 2).

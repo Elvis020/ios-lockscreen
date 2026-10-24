@@ -4,16 +4,13 @@ import {
   CONTENT_RIGHT,
   getCalendarComposition,
   getCountdownComposition,
-  getDayRowsLayout,
-  getMonthCollectionLayout,
+  getContinuousDotGridLayout,
   getWallpaperEventLayout,
   getWallpaperHeaderCopy,
   getWallpaperLayoutBounds,
-  isGroupedCalendarLayout,
   HEADER_HEIGHT,
   WALLPAPER_HEIGHT,
   WALLPAPER_WIDTH,
-  WEEKDAY_LABELS,
 } from './wallpaperLayout';
 import {
   formatPeriodRemaining,
@@ -116,12 +113,7 @@ export function buildNativeWallpaperScene(
   }
 
   if (composition) {
-    addCalendar(
-      scene,
-      model,
-      composition.calendarTop,
-      composition.calendarTop + composition.calendarHeight,
-    );
+    addCalendar(scene, model, composition.calendarTop);
     addEvents(scene, model, composition.eventsTop);
   } else if (model.presentation === 'agenda') {
     addEvents(scene, model, bounds.presentationTop);
@@ -129,7 +121,7 @@ export function buildNativeWallpaperScene(
     addCountdown(scene, model, bounds.presentationTop, bounds.presentationBottom);
   } else if (model.presentation === 'progress') {
     addPeriodProgress(scene, model, bounds.presentationTop);
-    addCalendar(scene, model, bounds.calendarTop!, bounds.calendarBottom!);
+    addCalendar(scene, model, bounds.calendarTop!);
   } else {
     addMinimal(scene, model, bounds.presentationTop, bounds.presentationBottom);
   }
@@ -145,141 +137,22 @@ function addCalendar(
   scene: NativeWallpaperScene,
   model: WallpaperModel,
   top: number,
-  bottom: number,
 ): void {
-  if (model.timeRange === 'week' || model.timeRange === 'rolling14') {
-    addDayRows(scene, model, top, bottom);
-  } else {
-    addMonths(scene, model, top, bottom);
-  }
-}
-
-function addDayRows(
-  scene: NativeWallpaperScene,
-  model: WallpaperModel,
-  top: number,
-  bottom: number,
-): void {
-  const { geometry, rowGap } = getDayRowsLayout(model, bottom - top);
-  const contentHeight = geometry.labelSize * 1.2 + geometry.labelGap + geometry.size;
-  const cardGap = (CONTENT_WIDTH - 7 * geometry.width) / 6;
+  const grid = getContinuousDotGridLayout(model);
 
   for (const [index, cell] of model.cells.entries()) {
-    const row = Math.floor(index / 7);
-    const cardTop = top + row * (geometry.height + rowGap);
-    const labelTop = cardTop + (geometry.height - contentHeight) / 2;
-    const left = CONTENT_LEFT + (index % 7) * (geometry.width + cardGap);
+    const position = grid.positions[index];
 
-    addText(
-      scene,
-      cell.weekdayLabel.toUpperCase(),
-      {
-        x: left,
-        y: labelTop,
-        width: geometry.width,
-        height: 30,
-      },
-      isGroupedCalendarLayout(model) ? model.theme.text : model.theme.subtext,
-      geometry.labelSize,
-      'semibold',
-      'center',
-    );
     addDot(
       scene,
       cell,
       model.theme,
       {
-        x: left + (geometry.width - geometry.size) / 2,
-        y: labelTop + geometry.labelSize * 1.2 + geometry.labelGap,
+        x: CONTENT_LEFT + position.x,
+        y: top + position.y,
       },
-      geometry,
+      grid,
     );
-  }
-}
-
-function addMonths(
-  scene: NativeWallpaperScene,
-  model: WallpaperModel,
-  top: number,
-  bottom: number,
-): void {
-  const collection = getMonthCollectionLayout(model, bottom - top);
-  const geometry = collection.geometry;
-  const showLabel = model.monthGroups.length > 1;
-  const labelHeight = showLabel ? geometry.labelSize * 1.2 + geometry.labelGap : 0;
-  const weekdayHeight = geometry.showWeekdays ? geometry.weekdaySize * 1.2 : 0;
-  const groupWidth = (CONTENT_WIDTH * collection.widthPercent) / 100;
-  const groupGap =
-    collection.columns === 1
-      ? 0
-      : (CONTENT_WIDTH - collection.columns * groupWidth) / (collection.columns - 1);
-
-  for (const [groupIndex, group] of model.monthGroups.entries()) {
-    const row = Math.floor(groupIndex / collection.columns);
-    const column = groupIndex % collection.columns;
-    const groupTop = top + collection.rowLayouts[row].top;
-    const left = CONTENT_LEFT + column * (groupWidth + groupGap) + geometry.paddingX;
-    const width = groupWidth - geometry.paddingX * 2;
-    const labelTop = groupTop + geometry.paddingY;
-    const weekdayTop = labelTop + labelHeight;
-    const cellTop = weekdayTop + weekdayHeight + (geometry.showWeekdays ? 7 : 0);
-    const cellWidth = width / 7;
-
-    if (showLabel) {
-      addText(
-        scene,
-        group.label,
-        {
-          x: left,
-          y: labelTop,
-          width,
-          height: geometry.labelSize * 1.2,
-        },
-        model.theme.text,
-        geometry.labelSize,
-        'semibold',
-      );
-    }
-
-    for (const [index, label] of (geometry.showWeekdays
-      ? WEEKDAY_LABELS
-      : []
-    ).entries()) {
-      addText(
-        scene,
-        label,
-        {
-          x: left + index * cellWidth,
-          y: weekdayTop,
-          width: cellWidth,
-          height: weekdayHeight,
-        },
-        isGroupedCalendarLayout(model) ? model.theme.text : model.theme.subtext,
-        geometry.weekdaySize,
-        'semibold',
-        'center',
-      );
-    }
-
-    for (const [index, cell] of group.cells.entries()) {
-      if (!cell) {
-        continue;
-      }
-
-      addDot(
-        scene,
-        cell,
-        model.theme,
-        {
-          x: left + (index % 7) * cellWidth + (cellWidth - geometry.dot.size) / 2,
-          y:
-            cellTop +
-            Math.floor(index / 7) * geometry.cellHeight +
-            (geometry.cellHeight - geometry.dot.size) / 2,
-        },
-        geometry.dot,
-      );
-    }
   }
 }
 

@@ -18,12 +18,19 @@ all 40 combinations of the five ranges, four presentations and two clock profile
 including saved built-in/custom themes. The current Telegram/dashboard settings
 remain authoritative; a preset is not silently replaced by a different view.
 
-Calendar/Hybrid/Progress headings start at the top of the existing clock-safe band, with
-the grid directly below. Event rows have an independent preferred anchor, so
-moving the calendar up does not pull the default event block up with it. Dense
-grids can move events down to avoid overlap; larger lists move up when needed to
-remain above notifications. Quarter dots remain
-32px, weekdays remain clear, and event timer lines remain 3px thin. Compact lists
+Calendar/Hybrid/Progress use one continuous field of chronological dots. Week and
+rolling 14 days use seven columns, Month uses seven, Quarter ten, and Year twenty.
+There are exactly as many dots as days in the selected period: no month panels,
+weekday labels, date numbers, or leading/trailing blank day cells. A partial last
+row stays left-aligned with the first row.
+
+The first fill-dot starts at y=800 for Standard or y=1000 for Large clock on the
+1284×2778 image, consistently across ranges. The modest range/progress header sits
+above it. These are calibration targets beneath an estimated clock, not device
+detection; widgets, iOS zoom/cropping and clock customization need phone testing.
+Event rows have an independent preferred anchor and remain above notifications.
+Quarter restores larger 64px dots (52px with Large clock), while event timer lines
+remain 3px thin. Compact lists
 default to two events plus `+N more`. Set 1–5 using `/eventcount` or **Events shown**
 on the dashboard; this preference survives view changes. Rows stay full width
 while space allows, tightening their vertical gaps before using two columns for
@@ -31,20 +38,22 @@ the densest combinations. Calendar dot sizes are preserved. Countdown counts its
 featured event as the first, with additional events beneath it. Event dates and
 the redundant quarter heading stay hidden.
 
-Month rows use a 100px pitch (90px with the large clock). Quarter rows spread from
-52px up to 72px when space permits, without enlarging the dots. Year uses three
-columns and four compact quarter rows, without spreading rows to fill the band.
-It has a centered progress caption and events, not a separate year heading or
-overview bar. Saved Year/progress settings render identically to Year/calendar.
-Rolling 14 days uses two rows of seven. Native dot and
-event-ring origins align to whole pixels, retaining normal circle antialiasing.
+Month uses 92px dots and a 128px vertical pitch (80px / 112px with Large clock).
+Quarter uses an 88px pitch (72px with Large clock). Year uses 24px dots in nineteen
+rows with a 38px pitch, including leap years. Week and rolling 14 days use 100px
+dots; the latter has two rows. Geometry depends only on range and clock profile,
+not presentation or event count, so changing a setting cannot shrink or vertically
+stretch the dots. Native dots and concentric rings align to integer pixels.
+Quarter/Year retain a centered progress caption without an overview bar. Saved
+Year/progress settings render identically to Year/calendar. Countdown retains its
+featured-event presentation rather than adding a dot field.
 
 These refinements change server-side drawing data only. The scene stays at version 1:
 existing Scriptable code and native Shortcut URLs do not need changing. After the
 deployment, rerun the same Shortcut to fetch the revised layout.
 
-The installed adapter accepts native text up to 80px. Countdown therefore uses
-an 80px native number rather than the PNG renderer's oversized number. Neither
+The installed adapter accepts native text up to 80px. Countdown uses an 80px number
+in both renderers. Neither
 path changes the actual iOS clock.
 
 The native drawing budget stays at 600 commands and 200,000 serialized characters.
@@ -107,7 +116,7 @@ If Scriptable is terminated for memory or fails inside the extension, try its
 ## Verify on the iPhone
 
 Check all seven presets, event counts 1–5, and both clock profiles. Confirm genuine system-font text,
-crisp dots, readable weekday labels, full month names, event-ring alignment and
+crisp dots, the correct period-day count, consistent first-dot placement, event-ring alignment and
 three-pixel event tracks. Test a long title, accented characters and emoji. Event
 names currently use conservative single-line truncation because DrawContext does
 not expose native text measurement; exact clipping needs device inspection.
