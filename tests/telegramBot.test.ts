@@ -396,6 +396,258 @@ describe('Telegram commands', () => {
     expect((await getUser('owner'))?.events).toEqual([]);
   });
 
+  it('edits a snapshot-selected event safely after the event list is reordered', async () => {
+    const first = manualEvent('first', 'First');
+    const second = { ...manualEvent('second', 'Second'), date: '2026-12-02' };
+
+    await seedLinkedUser({ events: [first, second] });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+
+    await processTelegramUpdate(telegramUpdate('/edit'), 'https://example.com');
+    const select = deliveryBody(0).reply_markup.inline_keyboard[1][0].callback_data;
+
+    expect(select).toMatch(/^ee:[A-Za-z0-9_-]{12,32}:1$/);
+    expect(select).not.toContain('second');
+    expect(select.length).toBeLessThanOrEqual(64);
+
+    await redis.set('user:owner', { ...userRecord(), events: [second, first] });
+    await processTelegramUpdate(eventCallback(select), 'https://example.com');
+
+    const review = deliveryBody(1);
+    const changeName = review.reply_markup.inline_keyboard[0][1].callback_data;
+
+    await processTelegramUpdate(
+      eventCallback(changeName, 'edit-name'),
+      'https://example.com',
+    );
+    await processTelegramUpdate(telegramUpdate('Renamed'), 'https://example.com');
+
+    const save = deliveryBody(5).reply_markup.inline_keyboard[0][0].callback_data;
+
+    await processTelegramUpdate(eventCallback(save, 'edit-save'), 'https://example.com');
+
+    expect((await getUser('owner'))?.events).toEqual([
+      { ...second, name: 'Renamed' },
+      first,
+    ]);
+    expect(deliveryBody(6).text).toContain('Event updated');
+  });
+
+  it('explains empty and invalid numbered edit commands without opening a draft', async () => {
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getTelegramDraft } = await import('../lib/telegramDrafts');
+
+    await seedLinkedUser();
+    await processTelegramUpdate(telegramUpdate('/edit'), 'https://example.com');
+
+    expect(deliveryBody(0).text).toContain('No manual events');
+
+    await seedLinkedUser({ events: [manualEvent('first', 'First')] });
+
+    for (const command of ['/edit 0', '/edit 2', '/edit one', '/edit 1 extra']) {
+      await processTelegramUpdate(telegramUpdate(command), 'https://example.com');
+    }
+
+    expect(await getTelegramDraft('42')).toBeNull();
+    expect(
+      fetchMock.mock.calls.slice(1).map(([, init]) => JSON.parse(String(init.body)).text),
+    ).toEqual(
+      Array(4).fill(
+        '<b>Choose an event to edit</b>\nUse <code>/edit</code>, or <code>/edit NUMBER</code> from <code>/events</code>.',
+      ),
+    );
+  });
+
+  it('reviews a numbered edit, discards it without changing the event, and permits an edit at the event limit', async () => {
+    const events = Array.from({ length: 7 }, (_, index) =>
+      manualEvent(`event-${index}`, `Event ${index + 1}`),
+    );
+
+    await seedLinkedUser({ events });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+    const before = structuredClone((await getUser('owner'))!.events);
+
+    await processTelegramUpdate(telegramUpdate('/edit 1'), 'https://example.com');
+    const review = deliveryBody(0);
+    const cancel = review.reply_markup.inline_keyboard[2][0].callback_data;
+
+    expect(review.text).toContain('Review changes');
+    expect(
+      review.reply_markup.inline_keyboard
+        .flat()
+        .map(({ callback_data }: any) => callback_data.length),
+    ).toEqual(expect.arrayContaining([expect.any(Number)]));
+    expect(
+      review.reply_markup.inline_keyboard
+        .flat()
+        .every(({ callback_data }: any) => callback_data.length <= 64),
+    ).toBe(true);
+
+    await processTelegramUpdate(eventCallback(cancel, 'discard'), 'https://example.com');
+
+    expect((await getUser('owner'))?.events).toEqual(before);
+    expect(deliveryBody(1).text).toContain('Changes discarded');
+    expect(deliveryBody(1).text).toContain('unchanged');
+
+    await processTelegramUpdate(telegramUpdate('/edit 1'), 'https://example.com');
+    const save = deliveryBody(3).reply_markup.inline_keyboard[0][0].callback_data;
+
+    await processTelegramUpdate(
+      eventCallback(save, 'save-at-limit'),
+      'https://example.com',
+    );
+
+    expect((await getUser('owner'))?.events).toHaveLength(7);
+    expect(deliveryBody(4).text).toContain('Event updated');
+  });
+
+  it('rejects malformed, stale, and unauthorized edit callbacks without creating a draft', async () => {
+    await seedLinkedUser({ events: [manualEvent('first', 'First')] });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getTelegramDraft } = await import('../lib/telegramDrafts');
+
+    await processTelegramUpdate(telegramUpdate('/edit'), 'https://example.com');
+    const firstMenu = deliveryBody(0).reply_markup.inline_keyboard[0][0].callback_data;
+
+    await processTelegramUpdate(telegramUpdate('/edit'), 'https://example.com');
+    const currentMenu = deliveryBody(1).reply_markup.inline_keyboard[0][0].callback_data;
+
+    for (const data of [
+      `${currentMenu}:extra`,
+      currentMenu.replace(/:0$/, ':6'),
+      'ee:abcdefghijklmnop:0:extra',
+      'ev:abcdefghijklmnop:abcdefghijk:unknown',
+      firstMenu,
+    ]) {
+      await processTelegramUpdate(
+        eventCallback(data, `invalid-${data.length}`),
+        'https://example.com',
+      );
+    }
+
+    await processTelegramUpdate(
+      callbackWithIdentity(currentMenu, 99, 42, 'private'),
+      'https://example.com',
+    );
+    await processTelegramUpdate(
+      callbackWithIdentity(currentMenu, 42, 99, 'private'),
+      'https://example.com',
+    );
+    await processTelegramUpdate(
+      callbackWithIdentity(currentMenu, 42, 42, 'group'),
+      'https://example.com',
+    );
+
+    expect(await getTelegramDraft('42')).toBeNull();
+
+    await processTelegramUpdate(
+      eventCallback(currentMenu, 'selected-menu'),
+      'https://example.com',
+    );
+    const selected = await getTelegramDraft('42');
+
+    await processTelegramUpdate(
+      eventCallback(currentMenu, 'replayed-menu'),
+      'https://example.com',
+    );
+
+    expect(selected).toMatchObject({ operation: 'edit', original: { id: 'first' } });
+    expect(await getTelegramDraft('42')).toEqual(selected);
+  });
+
+  it('gates edit actions by draft step, including quick-date buttons', async () => {
+    await seedLinkedUser({ events: [manualEvent('first', 'First')] });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getTelegramDraft } = await import('../lib/telegramDrafts');
+    const { getUser } = await import('../lib/tokenManager');
+
+    await processTelegramUpdate(telegramUpdate('/edit 1'), 'https://example.com');
+    let draft = (await getTelegramDraft('42'))!;
+    const name = `ev:${draft.id}:${draft.revision}:name`;
+
+    await processTelegramUpdate(
+      eventCallback(name, 'change-name'),
+      'https://example.com',
+    );
+    draft = (await getTelegramDraft('42'))!;
+    await processTelegramUpdate(
+      eventCallback(`ev:${draft.id}:${draft.revision}:save`, 'save-during-name'),
+      'https://example.com',
+    );
+    await processTelegramUpdate(
+      eventCallback(`ev:${draft.id}:${draft.revision}:today`, 'today-during-name'),
+      'https://example.com',
+    );
+
+    expect((await getUser('owner'))?.events[0].name).toBe('First');
+    expect(await getTelegramDraft('42')).toMatchObject({
+      step: 'name',
+      date: '2026-11-01',
+    });
+
+    await processTelegramUpdate(telegramUpdate('Renamed'), 'https://example.com');
+    draft = (await getTelegramDraft('42'))!;
+    await processTelegramUpdate(
+      eventCallback(`ev:${draft.id}:${draft.revision}:date`),
+      'https://example.com',
+    );
+    draft = (await getTelegramDraft('42'))!;
+    await processTelegramUpdate(
+      eventCallback(`ev:${draft.id}:${draft.revision}:save`, 'save-during-date'),
+      'https://example.com',
+    );
+
+    expect((await getUser('owner'))?.events[0].name).toBe('First');
+    expect(await getTelegramDraft('42')).toMatchObject({ step: 'date' });
+    expect((await getTelegramDraft('42'))?.date).toBeUndefined();
+  });
+
+  it('does not mark a cancellation complete when its revision changes before the locked read', async () => {
+    await seedLinkedUser({ events: [manualEvent('first', 'First')] });
+    const { createTelegramDraft, getTelegramDraft } =
+      await import('../lib/telegramDrafts');
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const draft = await createTelegramDraft({
+      token: 'owner',
+      userId: '42',
+      chatId: '42',
+      name: 'First',
+      date: '2026-11-01',
+      operation: 'edit',
+      step: 'review',
+      original: manualEvent('first', 'First'),
+    });
+    const originalGet = redis.get.bind(redis);
+    let draftReads = 0;
+
+    vi.spyOn(redis, 'get').mockImplementation(async (key) => {
+      if (key === 'telegram:draft:42') {
+        draftReads += 1;
+
+        if (draftReads === 2) {
+          const current = await originalGet<Record<string, unknown>>(key);
+
+          redis.store.set(key, { ...current, revision: 'changed-revision' });
+        }
+      }
+
+      return originalGet(key);
+    });
+
+    const completion = { key: 'telegram:update:done:cancel-race', ttlSeconds: 86_400 };
+    const result = await processTelegramUpdate(
+      eventCallback(`ev:${draft.id}:${draft.revision}:cancel`, 'cancel-race'),
+      'https://example.com',
+      completion,
+    );
+
+    expect(result.completionCommitted).toBe(false);
+    expect(await redis.get(completion.key)).toBeNull();
+    expect(await getTelegramDraft('42')).toMatchObject({ revision: 'changed-revision' });
+  });
+
   it('uses calm, consistent copy for empty, usage, and unknown responses', async () => {
     await seedLinkedUser();
     const { processTelegramUpdate } = await import('../lib/telegramBot');
@@ -632,6 +884,22 @@ function eventCallback(data: string, callbackId = 'event-callback') {
       data,
       from: { id: 42 },
       message: { message_id: 88, chat: { id: 42, type: 'private' } },
+    },
+  };
+}
+
+function callbackWithIdentity(
+  data: string,
+  fromId: number,
+  chatId: number,
+  chatType: 'private' | 'group',
+) {
+  return {
+    callback_query: {
+      id: `callback-${fromId}-${chatId}-${chatType}`,
+      data,
+      from: { id: fromId },
+      message: { message_id: 88, chat: { id: chatId, type: chatType } },
     },
   };
 }

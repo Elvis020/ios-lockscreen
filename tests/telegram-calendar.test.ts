@@ -151,6 +151,82 @@ describe('Telegram calendar Mini App', () => {
     expect(await unauthorized.text()).not.toContain('Pacific/Kiritimati');
   });
 
+  it('accepts only an edit draft in its date step and sends the edit review controls', async () => {
+    await seedLinkedUser();
+    const { createTelegramDraft, getTelegramDraft, updateTelegramDraftStep } =
+      await import('../lib/telegramDrafts');
+    const { default: handler } = await import('../api/telegram/calendar');
+    const initData = await signedInitData(42);
+    const review = await createTelegramDraft({
+      token: 'owner',
+      userId: '42',
+      chatId: '42',
+      name: 'Dentist',
+      date: '2026-11-01',
+      operation: 'edit',
+      step: 'review',
+      original: manualEvent('dentist', 'Dentist'),
+    });
+
+    const reviewBootstrap = await handler(
+      postRequest({ action: 'bootstrap', draftId: review.id, initData }),
+    );
+    const nameDraft = await updateTelegramDraftStep(
+      '42',
+      review.id,
+      review.revision,
+      'name',
+    );
+    const nameBootstrap = await handler(
+      postRequest({ action: 'bootstrap', draftId: review.id, initData }),
+    );
+
+    expect(reviewBootstrap.status).toBe(409);
+    expect(nameDraft).toMatchObject({ step: 'name' });
+    expect(nameBootstrap.status).toBe(409);
+
+    const dateDraft = await createTelegramDraft({
+      token: 'owner',
+      userId: '42',
+      chatId: '42',
+      name: 'Dentist',
+      operation: 'edit',
+      step: 'date',
+      original: manualEvent('dentist', 'Dentist'),
+    });
+    const bootstrap = await handler(
+      postRequest({ action: 'bootstrap', draftId: dateDraft.id, initData }),
+    );
+    const posted = await handler(
+      postRequest({
+        draftId: dateDraft.id,
+        date: '2026-11-02',
+        requestId: 'edit-date-request',
+        initData,
+      }),
+    );
+    const updated = await getTelegramDraft('42');
+    const body = telegramDeliveryBody();
+    const buttons = (
+      body.reply_markup as { inline_keyboard: Array<Array<{ text: string }>> }
+    ).inline_keyboard
+      .flat()
+      .map(({ text }) => text);
+
+    expect(await bootstrap.json()).toEqual({ timeZone: 'UTC' });
+    expect(posted.status).toBe(200);
+    expect(updated).toMatchObject({
+      operation: 'edit',
+      step: 'review',
+      date: '2026-11-02',
+    });
+    expect((await redis.get<{ events: unknown[] }>('user:owner'))?.events).toEqual([]);
+    expect(body.text).toContain('Review changes');
+    expect(buttons).toEqual(
+      expect.arrayContaining(['Save changes', 'Change name', 'Change date']),
+    );
+  });
+
   it('returns a processing conflict rather than duplicate success until the request is done', async () => {
     await seedLinkedUser();
     const { createTelegramDraft } = await import('../lib/telegramDrafts');
@@ -258,6 +334,16 @@ async function seedLinkedUser(timeZone = 'UTC'): Promise<void> {
     },
   });
   await redis.set('telegram:user:42', 'owner');
+}
+
+function manualEvent(id: string, name: string) {
+  return {
+    id,
+    name,
+    date: '2026-11-01',
+    source: 'manual' as const,
+    createdAt: '2026-10-23T00:00:00.000Z',
+  };
 }
 
 function postRequest(body: unknown): Request {

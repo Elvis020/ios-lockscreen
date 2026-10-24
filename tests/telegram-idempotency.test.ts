@@ -3,6 +3,7 @@ import { InMemoryRedis } from './helpers/inMemoryRedis';
 
 const originalEnvironment = { ...process.env };
 let redis: InMemoryRedis;
+let fetchMock: ReturnType<typeof vi.fn>;
 
 describe('Telegram mutation idempotency', () => {
   beforeEach(() => {
@@ -10,10 +11,8 @@ describe('Telegram mutation idempotency', () => {
     redis = new InMemoryRedis();
     process.env.TELEGRAM_WEBHOOK_SECRET = 'webhook-secret';
     process.env.TELEGRAM_BOT_TOKEN = 'bot-token';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(new Response('{}', { status: 200 })),
-    );
+    fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
     vi.doMock('../lib/redis', () => ({
       getRedis: () => redis,
       isRedisConfigurationError: () => false,
@@ -69,6 +68,80 @@ describe('Telegram mutation idempotency', () => {
     expect(user?.events.map(({ id }) => id)).toEqual(['second']);
     expect(await redis.get(doneKey)).toBe('done');
     expect(redis.directSetAttempts.get(doneKey)).toBeUndefined();
+  });
+
+  it('keeps the delivered edit menu valid when a webhook retry is completed atomically', async () => {
+    await seedLinkedUser([manualEvent('first', 'First')]);
+    const doneKey = 'telegram:update:done:502';
+    const update = telegramUpdate(502, '/edit');
+
+    redis.failDirectSetKeys.add(doneKey);
+
+    const { default: handler } = await import('../api/telegram/webhook');
+
+    expect((await handler(request(update))).status).toBe(200);
+
+    const firstMenuId = await redis.get('telegram:edit-menu:current:42');
+
+    expect((await handler(request(update))).status).toBe(200);
+    expect(await redis.get(doneKey)).toBe('done');
+    expect(redis.directSetAttempts.get(doneKey)).toBeUndefined();
+    expect(await redis.get('telegram:edit-menu:current:42')).toBe(firstMenuId);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('atomically completes a repeated edit save even when the outer done write fails', async () => {
+    await seedLinkedUser([manualEvent('first', 'First')]);
+    const { default: handler } = await import('../api/telegram/webhook');
+
+    expect((await handler(request(telegramUpdate(501, '/edit 1')))).status).toBe(200);
+
+    const draft = await redis.get<{ id: string; revision: string }>('telegram:draft:42');
+    const doneKey = 'telegram:update:done:502';
+    const save = callbackUpdate(502, `ev:${draft?.id}:${draft?.revision}:save`);
+
+    redis.failDirectSetKeys.add(doneKey);
+
+    expect((await handler(request(save))).status).toBe(200);
+    expect((await handler(request(save))).status).toBe(200);
+
+    expect(await redis.get(doneKey)).toBe('done');
+    expect(redis.directSetAttempts.get(doneKey)).toBeUndefined();
+    expect(await redis.get('telegram:draft:42')).toBeNull();
+    expect(
+      (await redis.get<{ events: Array<{ id: string }> }>('user:owner'))?.events,
+    ).toEqual([manualEvent('first', 'First')]);
+  });
+
+  it('atomically completes a conflicting edit and deletes its draft', async () => {
+    await seedLinkedUser([manualEvent('first', 'First')]);
+    const { default: handler } = await import('../api/telegram/webhook');
+
+    expect((await handler(request(telegramUpdate(501, '/edit 1')))).status).toBe(200);
+
+    const draft = await redis.get<{ id: string; revision: string }>('telegram:draft:42');
+    const doneKey = 'telegram:update:done:502';
+    const user = await redis.get<{ events: Array<{ id: string; name: string }> }>(
+      'user:owner',
+    );
+
+    await redis.set('user:owner', {
+      ...user,
+      events: [{ ...user!.events[0], name: 'Changed elsewhere' }],
+    });
+    redis.failDirectSetKeys.add(doneKey);
+
+    expect(
+      (
+        await handler(
+          request(callbackUpdate(502, `ev:${draft?.id}:${draft?.revision}:save`)),
+        )
+      ).status,
+    ).toBe(200);
+
+    expect(await redis.get(doneKey)).toBe('done');
+    expect(redis.directSetAttempts.get(doneKey)).toBeUndefined();
+    expect(await redis.get('telegram:draft:42')).toBeNull();
   });
 
   it('atomically completes account linking with the one-time code', async () => {

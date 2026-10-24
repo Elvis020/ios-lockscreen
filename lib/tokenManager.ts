@@ -21,7 +21,11 @@ import {
   type TelegramLink,
   type UserData,
 } from './userSchema';
-import { draftKey, type TelegramEventDraft } from './telegramDrafts';
+import {
+  draftKey,
+  normalizeTelegramDraft,
+  type TelegramEventDraft,
+} from './telegramDrafts';
 
 export type { CalendarEvent, GoogleAccount, ManualEvent, UserData } from './userSchema';
 
@@ -186,7 +190,8 @@ export async function saveTelegramDraftEvent(
         return 'already-saved';
       }
 
-      const active = await redis.get<TelegramEventDraft>(draftKey(draft.userId));
+      const stored = await redis.get<TelegramEventDraft>(draftKey(draft.userId));
+      const active = stored ? normalizeTelegramDraft(stored) : null;
 
       if (
         !active ||
@@ -194,6 +199,7 @@ export async function saveTelegramDraftEvent(
         active.revision !== draft.revision ||
         active.userId !== draft.userId ||
         active.token !== token ||
+        active.step !== 'review' ||
         typeof active.expiresAt !== 'number' ||
         active.expiresAt <= Date.now() ||
         !active.date
@@ -226,6 +232,111 @@ export async function saveTelegramDraftEvent(
         createdAt: new Date().toISOString(),
       });
 
+      const wallpaperKey = user.wallpaperKey ?? generateUUID();
+
+      user.wallpaperKey = wallpaperKey;
+      const sets: RedisFencedSet[] = [
+        { key: `user:${token}`, value: user },
+        { key: `wallpaper:${wallpaperKey}`, value: token },
+        { key: saveKey, value: 'done', ttlSeconds: 86_400 },
+      ];
+
+      if (completion) {
+        sets.push({
+          key: completion.key,
+          value: 'done',
+          ttlSeconds: completion.ttlSeconds,
+        });
+      }
+
+      await commitIfLeasesOwned(redis, leases, sets, [draftKey(draft.userId)]);
+
+      return 'saved';
+    },
+  );
+}
+
+export async function saveTelegramEditDraft(
+  token: string,
+  draft: Pick<
+    TelegramEventDraft,
+    'id' | 'revision' | 'userId' | 'name' | 'date' | 'original'
+  >,
+  completion?: MutationCompletion,
+): Promise<'saved' | 'already-saved' | 'stale' | 'conflict'> {
+  const redis = getRedis();
+  const saveKey = `telegram:draft:completion:${draft.id}:${draft.revision}`;
+
+  return withRedisLocks(
+    redis,
+    [`user:${token}`, draftKey(draft.userId)],
+    async (leases) => {
+      if (await redis.get(saveKey)) {
+        if (completion) {
+          await commitIfLeasesOwned(redis, leases, [
+            { key: completion.key, value: 'done', ttlSeconds: completion.ttlSeconds },
+          ]);
+        }
+
+        return 'already-saved';
+      }
+
+      const stored = await redis.get<TelegramEventDraft>(draftKey(draft.userId));
+      const active = stored ? normalizeTelegramDraft(stored) : null;
+
+      if (
+        !active ||
+        active.id !== draft.id ||
+        active.revision !== draft.revision ||
+        active.userId !== draft.userId ||
+        active.token !== token ||
+        active.operation !== 'edit' ||
+        active.step !== 'review' ||
+        !active.original ||
+        !active.date ||
+        active.expiresAt <= Date.now()
+      ) {
+        return 'stale';
+      }
+
+      const original = active.original;
+
+      const user = await readUser(redis, token);
+
+      if (
+        !user ||
+        user.telegram?.userId !== active.userId ||
+        user.telegram.chatId !== active.chatId
+      ) {
+        return 'stale';
+      }
+
+      const eventIndex = user.events.findIndex(({ id }) => id === original.id);
+      const current = user.events[eventIndex];
+
+      if (
+        !current ||
+        current.name !== original.name ||
+        current.date !== original.date ||
+        current.source !== original.source ||
+        current.createdAt !== original.createdAt
+      ) {
+        const sets: RedisFencedSet[] = [];
+
+        if (completion) {
+          sets.push({
+            key: completion.key,
+            value: 'done',
+            ttlSeconds: completion.ttlSeconds,
+          });
+        }
+
+        await commitIfLeasesOwned(redis, leases, sets, [draftKey(draft.userId)]);
+
+        return 'conflict';
+      }
+
+      user.events[eventIndex] = { ...current, name: active.name, date: active.date };
       const wallpaperKey = user.wallpaperKey ?? generateUUID();
 
       user.wallpaperKey = wallpaperKey;

@@ -1,5 +1,10 @@
 import { getRedis } from './redis';
-import { commitIfLeasesOwned, withRedisLock, type RedisFencedSet } from './redisLock';
+import {
+  commitIfLeasesOwned,
+  withRedisLock,
+  withRedisLocks,
+  type RedisFencedSet,
+} from './redisLock';
 import { isValidDateString, normalizeEventName } from './validation';
 
 export interface TelegramEventDraft {
@@ -10,8 +15,27 @@ export interface TelegramEventDraft {
   chatId: string;
   name: string;
   date?: string;
+  operation?: 'create' | 'edit';
+  step?: 'name' | 'date' | 'review';
+  original?: TelegramEventOriginal;
   createdAt: number;
   expiresAt: number;
+}
+
+export interface TelegramEventOriginal {
+  id: string;
+  name: string;
+  date: string;
+  source: 'manual';
+  createdAt: string;
+}
+
+export interface TelegramEditMenu {
+  id: string;
+  userId: string;
+  token: string;
+  chatId: string;
+  eventIds: string[];
 }
 
 const DRAFT_TTL_SECONDS = 15 * 60;
@@ -48,6 +72,111 @@ export function draftKey(userId: string): string {
   return `telegram:draft:${userId}`;
 }
 
+export function editMenuKey(userId: string, id: string): string {
+  return `telegram:edit-menu:${userId}:${id}`;
+}
+
+function currentEditMenuKey(userId: string): string {
+  return `telegram:edit-menu:current:${userId}`;
+}
+
+export async function createTelegramEditMenu(
+  menu: Omit<TelegramEditMenu, 'id'>,
+  completion?: DraftCompletion,
+): Promise<TelegramEditMenu> {
+  const result = { ...menu, id: opaqueId(12) };
+  const redis = getRedis();
+
+  await withRedisLock(redis, currentEditMenuKey(result.userId), async (lease) => {
+    await commitIfLeasesOwned(
+      redis,
+      [lease],
+      [
+        {
+          key: editMenuKey(result.userId, result.id),
+          value: result,
+          ttlSeconds: DRAFT_TTL_SECONDS,
+        },
+        ...(completion
+          ? [{ key: completion.key, value: 'done', ttlSeconds: completion.ttlSeconds }]
+          : []),
+        {
+          key: currentEditMenuKey(result.userId),
+          value: result.id,
+          ttlSeconds: DRAFT_TTL_SECONDS,
+        },
+      ],
+    );
+  });
+
+  return result;
+}
+
+export async function consumeTelegramEditMenuAndCreateDraft(
+  userId: string,
+  menuId: string,
+  draft: Omit<TelegramEventDraft, 'id' | 'revision' | 'createdAt' | 'expiresAt'>,
+  completion?: DraftCompletion,
+): Promise<TelegramEventDraft | null> {
+  const redis = getRedis();
+
+  return withRedisLocks(
+    redis,
+    [
+      `user:${draft.token}`,
+      draftKey(userId),
+      editMenuKey(userId, menuId),
+      currentEditMenuKey(userId),
+    ],
+    async (leases) => {
+      const menu = await redis.get<TelegramEditMenu>(editMenuKey(userId, menuId));
+      const currentMenuId = await redis.get<string>(currentEditMenuKey(userId));
+      const user = await redis.get<{
+        telegram?: { userId?: string; chatId?: string };
+      }>(`user:${draft.token}`);
+
+      if (
+        !menu ||
+        currentMenuId !== menuId ||
+        menu.userId !== userId ||
+        menu.token !== draft.token ||
+        menu.chatId !== draft.chatId ||
+        user?.telegram?.userId !== userId ||
+        user.telegram.chatId !== draft.chatId
+      ) {
+        return null;
+      }
+
+      const createdAt = Date.now();
+      const result: TelegramEventDraft = {
+        ...draft,
+        id: opaqueId(12),
+        revision: opaqueId(8),
+        createdAt,
+        expiresAt: createdAt + DRAFT_TTL_SECONDS * 1000,
+      };
+      const sets: RedisFencedSet[] = [
+        { key: draftKey(userId), value: result, ttlSeconds: DRAFT_TTL_SECONDS },
+      ];
+
+      addCompletionSet(sets, completion);
+      await commitIfLeasesOwned(redis, leases, sets, [
+        editMenuKey(userId, menuId),
+        currentEditMenuKey(userId),
+      ]);
+
+      return result;
+    },
+  );
+}
+
+export async function getTelegramEditMenu(
+  userId: string,
+  id: string,
+): Promise<TelegramEditMenu | null> {
+  return getRedis().get<TelegramEditMenu>(editMenuKey(userId, id));
+}
+
 export async function createTelegramDraft(
   draft: Omit<TelegramEventDraft, 'id' | 'revision' | 'createdAt' | 'expiresAt'>,
   completion?: DraftCompletion,
@@ -56,6 +185,8 @@ export async function createTelegramDraft(
   const createdAt = Date.now();
   const result: TelegramEventDraft = {
     ...draft,
+    operation: draft.operation ?? 'create',
+    step: draft.step ?? (draft.name ? (draft.date ? 'review' : 'date') : 'name'),
     id: opaqueId(12),
     revision: opaqueId(8),
     createdAt,
@@ -88,7 +219,15 @@ export async function getTelegramDraft(
     return null;
   }
 
-  return draft;
+  return normalizeTelegramDraft(draft);
+}
+
+export function normalizeTelegramDraft(draft: TelegramEventDraft): TelegramEventDraft {
+  return {
+    ...draft,
+    operation: draft.operation ?? 'create',
+    step: draft.step ?? (draft.name ? (draft.date ? 'review' : 'date') : 'name'),
+  };
 }
 
 export async function updateTelegramDraftDate(
@@ -106,12 +245,13 @@ export async function updateTelegramDraftDate(
     if (
       !current ||
       current.id !== id ||
-      (revision !== undefined && current.revision !== revision)
+      (revision !== undefined && current.revision !== revision) ||
+      current.step !== 'date'
     ) {
       return null;
     }
 
-    const updated = { ...current, date, revision: opaqueId(8) };
+    const updated = { ...current, date, step: 'review' as const, revision: opaqueId(8) };
     const ttlSeconds = remainingDraftTtl(current);
 
     if (!ttlSeconds) {
@@ -135,6 +275,82 @@ export async function updateTelegramDraftDate(
   });
 }
 
+export async function updateTelegramDraftName(
+  userId: string,
+  id: string,
+  name: string,
+  revision: string,
+  completion?: DraftCompletion,
+): Promise<TelegramEventDraft | null> {
+  return updateTelegramDraft(
+    userId,
+    id,
+    revision,
+    { name, step: 'review' },
+    'name',
+    completion,
+  );
+}
+
+export async function updateTelegramDraftStep(
+  userId: string,
+  id: string,
+  revision: string,
+  step: 'name' | 'date',
+  completion?: DraftCompletion,
+): Promise<TelegramEventDraft | null> {
+  return updateTelegramDraft(
+    userId,
+    id,
+    revision,
+    step === 'date' ? { date: undefined, step } : { step },
+    'review',
+    completion,
+  );
+}
+
+async function updateTelegramDraft(
+  userId: string,
+  id: string,
+  revision: string,
+  changes: Partial<Pick<TelegramEventDraft, 'name' | 'date' | 'step'>>,
+  expectedStep: TelegramEventDraft['step'],
+  completion?: DraftCompletion,
+): Promise<TelegramEventDraft | null> {
+  const redis = getRedis();
+
+  return withRedisLock(redis, draftKey(userId), async (lease) => {
+    const current = await getTelegramDraft(userId);
+
+    if (
+      !current ||
+      current.id !== id ||
+      current.revision !== revision ||
+      current.step !== expectedStep
+    ) {
+      return null;
+    }
+
+    const ttlSeconds = remainingDraftTtl(current);
+
+    if (!ttlSeconds) {
+      await commitIfLeasesOwned(redis, [lease], [], [draftKey(userId)]);
+
+      return null;
+    }
+
+    const updated = { ...current, ...changes, revision: opaqueId(8) };
+    const sets: RedisFencedSet[] = [
+      { key: draftKey(userId), value: updated, ttlSeconds },
+    ];
+
+    addCompletionSet(sets, completion);
+    await commitIfLeasesOwned(redis, [lease], sets);
+
+    return updated;
+  });
+}
+
 export async function clearTelegramDraftDate(
   userId: string,
   id: string,
@@ -146,11 +362,21 @@ export async function clearTelegramDraftDate(
   return withRedisLock(redis, draftKey(userId), async (lease) => {
     const current = await getTelegramDraft(userId);
 
-    if (!current || current.id !== id || current.revision !== revision) {
+    if (
+      !current ||
+      current.id !== id ||
+      current.revision !== revision ||
+      current.step !== 'review'
+    ) {
       return null;
     }
 
-    const updated = { ...current, date: undefined, revision: opaqueId(8) };
+    const updated = {
+      ...current,
+      date: undefined,
+      step: 'date' as const,
+      revision: opaqueId(8),
+    };
     const ttlSeconds = remainingDraftTtl(current);
 
     if (!ttlSeconds) {

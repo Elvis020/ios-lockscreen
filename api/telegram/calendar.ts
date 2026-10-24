@@ -76,6 +76,10 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     if (body.action === 'bootstrap') {
+      if (!isActiveDateStep(draft)) {
+        return jsonResponse({ error: 'Event draft is unavailable' }, 409);
+      }
+
       return jsonResponse({ timeZone: user.timeZone });
     }
 
@@ -88,6 +92,10 @@ export default async function handler(req: Request): Promise<Response> {
 
     if (requestState) {
       return jsonResponse({ error: 'Calendar request is still processing' }, 409);
+    }
+
+    if (!isActiveDateStep(draft)) {
+      return jsonResponse({ error: 'Event draft is unavailable' }, 409);
     }
 
     const requestLease = crypto.randomUUID();
@@ -128,11 +136,12 @@ export default async function handler(req: Request): Promise<Response> {
       }
 
       const prefix = `ev:${updated.id}:${updated.revision}:`;
+      const editing = updated.operation === 'edit';
 
       await sendTelegramMessage(
         updated.chatId,
         [
-          '<b>Save this event?</b>',
+          `<b>${editing ? 'Review changes' : 'Save this event?'}</b>`,
           `Event: <b>${escapeTelegramHtml(updated.name)}</b>`,
           `Date: <b>${escapeTelegramHtml(formatTelegramEventDate(body.date))}</b>`,
         ].join('\n'),
@@ -141,9 +150,15 @@ export default async function handler(req: Request): Promise<Response> {
           replyMarkup: {
             inline_keyboard: [
               [
-                { text: 'Save event', callback_data: `${prefix}save` },
-                { text: 'Change date', callback_data: `${prefix}date` },
+                {
+                  text: editing ? 'Save changes' : 'Save event',
+                  callback_data: `${prefix}save`,
+                },
               ],
+              ...(editing
+                ? [[{ text: 'Change name', callback_data: `${prefix}name` }]]
+                : []),
+              [{ text: 'Change date', callback_data: `${prefix}date` }],
               [{ text: 'Cancel', callback_data: `${prefix}cancel` }],
             ],
           },
@@ -165,6 +180,10 @@ export default async function handler(req: Request): Promise<Response> {
   } catch (error) {
     return apiErrorResponse(error, 'Telegram calendar request failed');
   }
+}
+
+function isActiveDateStep(draft: Awaited<ReturnType<typeof getTelegramDraft>>): boolean {
+  return Boolean(draft && (draft.step === 'date' || (!draft.operation && !draft.date)));
 }
 
 interface CalendarDateRequestBody {

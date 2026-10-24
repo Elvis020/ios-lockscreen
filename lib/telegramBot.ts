@@ -25,19 +25,30 @@ import {
   linkTelegramIdentity,
   updatePreferences,
   saveTelegramDraftEvent,
+  saveTelegramEditDraft,
   type MutationCompletion,
 } from './tokenManager';
 import {
   cancelTelegramDraft,
   clearTelegramDraftDate,
   createTelegramDraft,
+  createTelegramEditMenu,
+  consumeTelegramEditMenuAndCreateDraft,
   formatTelegramEventDate,
   getTelegramDraft,
+  getTelegramEditMenu,
   parseTelegramEventInput,
   updateTelegramDraftDate,
+  updateTelegramDraftName,
+  updateTelegramDraftStep,
   type TelegramEventDraft,
 } from './telegramDrafts';
-import { createCustomTheme, isValidDateString, isValidTimeZone } from './validation';
+import {
+  createCustomTheme,
+  isValidDateString,
+  isValidTimeZone,
+  normalizeEventName,
+} from './validation';
 
 const WALLPAPER_REFRESH_NOTE = 'Changes appear on the next iOS wallpaper refresh.';
 
@@ -144,9 +155,9 @@ export async function processTelegramUpdate(
       return { completionCommitted: false };
     }
 
-    const user = await getUser(token);
+    const user = token ? await getUser(token) : null;
 
-    if (!user || user.telegram?.userId !== userId) {
+    if (!user || user.telegram?.userId !== userId || user.telegram.chatId !== chatId) {
       await deleteRedisKeyIfValue(redis, `telegram:user:${userId}`, token);
       await sendTelegramReply(chatId, unlinkedReply());
 
@@ -157,6 +168,33 @@ export async function processTelegramUpdate(
       const draft = await getTelegramDraft(userId);
 
       if (draft?.token === token && draft.chatId === chatId) {
+        if (draft.operation === 'edit' && draft.step === 'name') {
+          const name = normalizeEventName(text);
+
+          if (!name) {
+            await sendTelegramReply(
+              chatId,
+              htmlReply('<b>Event name needed</b>\nUse 1–50 characters.'),
+            );
+
+            return { completionCommitted: false };
+          }
+
+          const updated = await updateTelegramDraftName(
+            userId,
+            draft.id,
+            name,
+            draft.revision,
+            completion,
+          );
+
+          if (updated) {
+            await sendTelegramReply(chatId, draftReply(updated, origin));
+
+            return { completionCommitted: Boolean(completion) };
+          }
+        }
+
         if (draft.name) {
           await sendTelegramReply(chatId, draftReply(draft, origin));
 
@@ -341,11 +379,99 @@ async function processTelegramCallback(
   origin: string,
   completion?: MutationCompletion,
 ): Promise<TelegramProcessingResult> {
+  if (callback.data?.startsWith('ee:')) {
+    return processEditMenuCallback(callback, origin, completion);
+  }
+
   if (callback.data?.startsWith('ev:')) {
     return processEventCallback(callback, origin, completion);
   }
 
   return processThemeCallback(callback, completion);
+}
+
+async function processEditMenuCallback(
+  callback: NonNullable<TelegramUpdate['callback_query']>,
+  origin: string,
+  completion?: MutationCompletion,
+): Promise<TelegramProcessingResult> {
+  const callbackId = callback.id;
+  let acknowledgement = 'That edit menu has expired. Open /edit again.';
+
+  try {
+    const match = callback.data?.match(/^ee:([A-Za-z0-9_-]{16}):([0-6])$/);
+    const [, menuId, indexText] = match ?? [];
+    const chatId = callback.message?.chat?.id;
+    const userId = callback.from?.id;
+
+    if (
+      !match ||
+      callback.message?.chat?.type !== 'private' ||
+      chatId === undefined ||
+      userId === undefined
+    ) {
+      return { completionCommitted: false };
+    }
+
+    const telegramUserId = String(userId);
+    const chat = String(chatId);
+    const redis = getRedis();
+    const token = await redis.get<string>(`telegram:user:${telegramUserId}`);
+    const menu = await getTelegramEditMenu(telegramUserId, menuId!);
+
+    if (!token || !menu || menu.token !== token || menu.chatId !== chat) {
+      return { completionCommitted: false };
+    }
+
+    const eventId = menu.eventIds[Number(indexText)];
+    const user = eventId ? await getUser(token) : null;
+    const event = user?.events.find(({ id }) => id === eventId);
+
+    if (!user || !event || event.source !== 'manual') {
+      acknowledgement = 'That event changed. Open /edit again.';
+
+      return { completionCommitted: false };
+    }
+
+    if (user.telegram?.userId !== telegramUserId || user.telegram.chatId !== chat) {
+      return { completionCommitted: false };
+    }
+
+    const draft = await consumeTelegramEditMenuAndCreateDraft(
+      telegramUserId,
+      menuId!,
+      {
+        token,
+        userId: telegramUserId,
+        chatId: chat,
+        name: event.name,
+        date: event.date,
+        operation: 'edit',
+        step: 'review',
+        original: {
+          id: event.id,
+          name: event.name,
+          date: event.date,
+          source: event.source,
+          createdAt: event.createdAt,
+        },
+      },
+      completion,
+    );
+
+    if (!draft) {
+      return { completionCommitted: false };
+    }
+
+    acknowledgement = 'Edit event.';
+    await sendTelegramReply(chat, draftReply(draft, origin));
+
+    return { completionCommitted: Boolean(completion) };
+  } finally {
+    if (callbackId) {
+      await answerTelegramCallback(callbackId, acknowledgement);
+    }
+  }
 }
 
 async function processEventCallback(
@@ -359,13 +485,13 @@ async function processEventCallback(
   try {
     const chatId = callback.message?.chat?.id;
     const userId = callback.from?.id;
-    const [namespace, id, revision, action] = callback.data?.split(':') ?? [];
+    const match = callback.data?.match(
+      /^ev:([A-Za-z0-9_-]{16}):([A-Za-z0-9_-]{11}):(save|name|date|today|tomorrow|monday|cancel)$/,
+    );
+    const [, id, revision, action] = match ?? [];
 
     if (
-      namespace !== 'ev' ||
-      !id ||
-      !revision ||
-      !action ||
+      !match ||
       chatId === undefined ||
       userId === undefined ||
       callback.message?.chat?.type !== 'private'
@@ -378,8 +504,13 @@ async function processEventCallback(
     const token = await getRedis().get<string>(`telegram:user:${telegramUserId}`);
     const draft = await getTelegramDraft(telegramUserId);
 
+    const user = token ? await getUser(token) : null;
+
     if (
       !token ||
+      !user ||
+      user.telegram?.userId !== telegramUserId ||
+      user.telegram.chatId !== chat ||
       !draft ||
       draft.id !== id ||
       draft.revision !== revision ||
@@ -404,13 +535,39 @@ async function processEventCallback(
       acknowledgement = 'Draft cancelled.';
       await sendTelegramReply(
         chat,
-        htmlReply('<b>Event cancelled</b>\nNothing was saved.'),
+        htmlReply(
+          draft.operation === 'edit'
+            ? '<b>Changes discarded</b>\nThe event is unchanged.'
+            : '<b>Event cancelled</b>\nNothing was saved.',
+        ),
       );
 
       return { completionCommitted: Boolean(completion) };
     }
 
-    if (action === 'date') {
+    if (action === 'name' && draft.operation === 'edit' && draft.step === 'review') {
+      const updated = await updateTelegramDraftStep(
+        telegramUserId,
+        id,
+        revision,
+        'name',
+        completion,
+      );
+
+      if (!updated) {
+        return { completionCommitted: false };
+      }
+
+      acknowledgement = 'Send a new name.';
+      await sendTelegramReply(
+        chat,
+        htmlReply('<b>Change event name</b>\nSend the new name only.'),
+      );
+
+      return { completionCommitted: Boolean(completion) };
+    }
+
+    if (action === 'date' && draft.step === 'review') {
       const updated = await clearTelegramDraftDate(
         telegramUserId,
         id,
@@ -428,7 +585,10 @@ async function processEventCallback(
       return { completionCommitted: Boolean(completion) };
     }
 
-    if (action === 'today' || action === 'tomorrow' || action === 'monday') {
+    if (
+      draft.step === 'date' &&
+      (action === 'today' || action === 'tomorrow' || action === 'monday')
+    ) {
       const user = await getUser(token);
 
       if (!user) {
@@ -462,8 +622,11 @@ async function processEventCallback(
       return { completionCommitted: Boolean(completion) };
     }
 
-    if (action === 'save' && draft.date) {
-      const outcome = await saveTelegramDraftEvent(token, draft, completion);
+    if (action === 'save' && draft.step === 'review' && draft.date) {
+      const outcome =
+        draft.operation === 'edit'
+          ? await saveTelegramEditDraft(token, draft, completion)
+          : await saveTelegramDraftEvent(token, draft, completion);
 
       if (outcome === 'limit') {
         acknowledgement = 'Event limit reached.';
@@ -479,11 +642,23 @@ async function processEventCallback(
         return { completionCommitted: false };
       }
 
+      if (outcome === 'conflict') {
+        acknowledgement = 'Event changed elsewhere.';
+        await sendTelegramReply(
+          chat,
+          htmlReply(
+            '<b>Event changed</b>\nIt was updated or removed elsewhere. Open <code>/edit</code> and try again.',
+          ),
+        );
+
+        return { completionCommitted: Boolean(completion) };
+      }
+
       acknowledgement = outcome === 'already-saved' ? 'Already saved.' : 'Event saved.';
       await sendTelegramReply(
         chat,
         htmlReply(
-          `✓ <b>Event saved</b>\n${escapeTelegramHtml(draft.name)} · ${escapeTelegramHtml(formatTelegramEventDate(draft.date))}\n${WALLPAPER_REFRESH_NOTE}`,
+          `✓ <b>Event ${draft.operation === 'edit' ? 'updated' : 'saved'}</b>\n${escapeTelegramHtml(draft.name)} · ${escapeTelegramHtml(formatTelegramEventDate(draft.date))}\n${WALLPAPER_REFRESH_NOTE}`,
         ),
       );
 
@@ -831,10 +1006,96 @@ async function runLinkedTelegramCommand(
               `${index + 1}. <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)}`,
           ),
           '',
-          'Delete one with <code>/delete NUMBER</code>.',
+          'Edit one with <code>/edit</code> or delete one with <code>/delete NUMBER</code>.',
         ].join('\n'),
       ),
       completionCommitted: false,
+    };
+  }
+
+  if (command === '/edit') {
+    if (!context) {
+      return { reply: usageReply('Edit an event', '/edit'), completionCommitted: false };
+    }
+
+    const user = await getUser(token);
+
+    if (!user?.events.length) {
+      return {
+        reply: htmlReply(
+          '<b>No manual events</b>\nAdd one with <code>/add Event name</code>.',
+        ),
+        completionCommitted: false,
+      };
+    }
+
+    const requestedIndex = args.length === 1 ? Number(args[0]) - 1 : undefined;
+
+    if (
+      args.length > 1 ||
+      (args.length === 1 &&
+        (!Number.isInteger(requestedIndex) ||
+          requestedIndex! < 0 ||
+          requestedIndex! >= user.events.length))
+    ) {
+      return {
+        reply: htmlReply(
+          '<b>Choose an event to edit</b>\nUse <code>/edit</code>, or <code>/edit NUMBER</code> from <code>/events</code>.',
+        ),
+        completionCommitted: false,
+      };
+    }
+
+    if (requestedIndex !== undefined) {
+      const event = user.events[requestedIndex];
+      const draft = await createTelegramDraft(
+        {
+          token,
+          userId: context.userId,
+          chatId: context.chatId,
+          name: event.name,
+          date: event.date,
+          operation: 'edit',
+          step: 'review',
+          original: {
+            id: event.id,
+            name: event.name,
+            date: event.date,
+            source: event.source,
+            createdAt: event.createdAt,
+          },
+        },
+        completion,
+      );
+
+      return {
+        reply: draftReply(draft, origin),
+        completionCommitted: Boolean(completion),
+      };
+    }
+
+    const menu = await createTelegramEditMenu(
+      {
+        userId: context.userId,
+        token,
+        chatId: context.chatId,
+        eventIds: user.events.map(({ id }) => id),
+      },
+      completion,
+    );
+    const buttons = user.events.map((event, index) => [
+      {
+        text: `${index + 1}. ${event.name} · ${event.date}`.slice(0, 64),
+        callback_data: `ee:${menu.id}:${index}`,
+      },
+    ]);
+
+    return {
+      reply: htmlReply(
+        '<b>Edit an event</b>\nChoose one to review your changes before saving.',
+        { inline_keyboard: buttons },
+      ),
+      completionCommitted: Boolean(completion),
     };
   }
 
@@ -1224,14 +1485,20 @@ function draftReply(draft: TelegramEventDraft, origin: string): TelegramReply {
   const prefix = `ev:${draft.id}:${draft.revision}:`;
 
   if (draft.date) {
+    const editing = draft.operation === 'edit';
+
     return htmlReply(
-      `<b>Save this event?</b>\nEvent: <b>${escapeTelegramHtml(draft.name)}</b>\nDate: <b>${escapeTelegramHtml(formatTelegramEventDate(draft.date))}</b>`,
+      `<b>${editing ? 'Review changes' : 'Save this event?'}</b>\nEvent: <b>${escapeTelegramHtml(draft.name)}</b>\nDate: <b>${escapeTelegramHtml(formatTelegramEventDate(draft.date))}</b>\n${editing ? 'Nothing changes until you save.' : ''}`,
       {
         inline_keyboard: [
           [
-            { text: 'Save event', callback_data: `${prefix}save` },
-            { text: 'Change date', callback_data: `${prefix}date` },
+            {
+              text: editing ? 'Save changes' : 'Save event',
+              callback_data: `${prefix}save`,
+            },
+            ...(editing ? [{ text: 'Change name', callback_data: `${prefix}name` }] : []),
           ],
+          [{ text: 'Change date', callback_data: `${prefix}date` }],
           [{ text: 'Cancel', callback_data: `${prefix}cancel` }],
         ],
       },
@@ -1241,7 +1508,7 @@ function draftReply(draft: TelegramEventDraft, origin: string): TelegramReply {
   const calendarUrl = `${calendarOrigin(origin)}/api/telegram/calendar?draft=${encodeURIComponent(draft.id)}`;
 
   return htmlReply(
-    `<b>When is ${escapeTelegramHtml(draft.name)}?</b>\nNothing is saved until you confirm.`,
+    `<b>When is ${escapeTelegramHtml(draft.name)}?</b>\nNothing is ${draft.operation === 'edit' ? 'changed' : 'saved'} until you confirm.`,
     {
       inline_keyboard: [
         [
@@ -1331,6 +1598,7 @@ function helpText(): string {
     '<code>/add Event name</code>  Guided date picker',
     '<code>/add Dentist tomorrow</code>  Natural dates work too',
     '<code>/events</code>',
+    '<code>/edit</code> or <code>/edit NUMBER</code>  Review an event before saving',
     '<code>/eventcount 1|2|3|4|5</code>  Events shown (default 2)',
     '<code>/delete NUMBER</code>',
     '',

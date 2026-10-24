@@ -55,6 +55,8 @@ Typing `/` in the bot chat will then show autocomplete for:
 /url
 /add Event name
 /events
+/edit
+/edit NUMBER
 /eventcount 1|2|3|4|5
 /delete NUMBER
 /view week|month|quarter|rolling14|countdown|year|hybrid
@@ -94,6 +96,13 @@ Friday`, while the exact `/add YYYY-MM-DD Event name` form remains supported. Na
 entries offer Today, Tomorrow, Next Monday, or a compact Telegram calendar before a final
 Save event confirmation.
 
+`/edit` creates a private, 15-minute button menu from a server-side snapshot; the
+callback contains only the menu token and position, never an event ID. `/edit NUMBER`
+opens the current numbered event directly. Every edit starts with an immutable copy of
+the original event and only changes the stored event after **Save changes**. If another
+client changes or removes the event first, the save is rejected safely. The normal date
+buttons and Mini App work only while an active date-selection step is open.
+
 `/theme` and `/theme list` show all eight built-in themes in a compact visual contact
 sheet and two-column selector. A Custom themes page provides the separately saved themes;
 neither page silently truncates entries. The preview is a static PNG:
@@ -106,7 +115,7 @@ Year uses a continuous twenty-two-column dot field with event timers; older save
 Year/progress settings render the same way.
 
 Run `npm run telegram:configure-commands` again after deploying this update to add
-`/eventcount` to Telegram's autocomplete menu. This does not alter the webhook.
+`/eventcount` and `/edit` to Telegram's autocomplete menu. This does not alter the webhook.
 
 `/start` is intentionally omitted from autocomplete because it is only used by the dashboard's single-use account-link URL.
 

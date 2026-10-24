@@ -40,10 +40,14 @@ Per-user mutations use short-lived owner locks with atomic commit-time lease fen
 - Google refresh tokens are encrypted with AES-GCM before Redis storage.
 - OAuth state uses a short-lived, secure, HttpOnly, SameSite cookie.
 - Telegram link codes and OAuth state expire after ten minutes.
-- Telegram event drafts expire after fifteen minutes. The Mini App calendar verifies
-  signed Telegram launch data, checks freshness, and binds the verified user to the
-  active linked draft before accepting a date. Final event creation still requires a
-  separate confirmation in the bot chat.
+- Telegram event drafts and edit-menu snapshots expire after fifteen minutes. Edit-menu
+  callbacks carry an opaque menu token plus a bounded slot, never an event ID; consuming
+  a menu creates one draft atomically and invalidates prior menu buttons. The Mini App
+  verifies signed Telegram launch data, checks freshness, and binds the verified user to
+  an active date-selection draft before bootstrapping or accepting a date. Final create
+  and edit saves use fenced user/draft commits; an edit compares its immutable original
+  snapshot and discards the draft on conflict. The date picker sends a separate
+  confirmation in the bot chat.
 - Personalized wallpaper responses are private and not cached.
 - The public fallback wallpaper may use a one-hour CDN cache.
 - Errors returned to clients avoid exposing internal details.

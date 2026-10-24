@@ -23,7 +23,7 @@ Calendar Lockscreen turns your calendar and upcoming events into a live wallpape
 - Switch between calendar, countdown, progress, and hybrid presentations.
 - Start from seven presets and calibrate spacing for a standard or large clock.
 - Choose how many events appear in every view (default: 2).
-- Add, list, and delete events from Telegram.
+- Add, list, edit, and delete events from Telegram.
 - Import selected Google Calendar events.
 - Change built-in themes or create your own.
 - Keep the dashboard, bot, and wallpaper in sync through Redis.
