@@ -123,7 +123,10 @@ describe('wallpaper renderer', () => {
           const expectedTop =
             presentation === 'countdown'
               ? profileBand.top
-              : FIRST_DOT_TOP[lockScreenProfile] - 80;
+              : FIRST_DOT_TOP[lockScreenProfile] -
+                getContinuousDotGridLayout(model).eventRingGap -
+                getContinuousDotGridLayout(model).eventRingWidth -
+                84;
 
           expect(bounds.contentTop).toBe(expectedTop);
           expect(bounds.contentBottom).toBeLessThanOrEqual(profileBand.bottom);
@@ -143,12 +146,8 @@ describe('wallpaper renderer', () => {
           }
 
           const eventLayout = getWallpaperEventLayout(model);
-          const requiredEventHeight =
-            eventLayout.limit * eventLayout.rowHeight +
-            Math.max(0, eventLayout.limit - 1) * eventLayout.rowGap +
-            eventLayout.overflowHeight;
 
-          expect(requiredEventHeight).toBeLessThanOrEqual(eventLayout.slotHeight);
+          expect(eventLayout.contentHeight).toBeLessThanOrEqual(eventLayout.slotHeight);
         }
       }
     }
@@ -168,8 +167,8 @@ describe('wallpaper renderer', () => {
       expect(geometry.eventRingWidth).toBeGreaterThanOrEqual(2);
     }
 
-    expect(CALENDAR_DOT_GEOMETRY.quarter.size).toBe(64);
-    expect(CALENDAR_DOT_GEOMETRY.year.size).toBeGreaterThanOrEqual(14);
+    expect(CALENDAR_DOT_GEOMETRY.quarter.size).toBe(72);
+    expect(CALENDAR_DOT_GEOMETRY.year.size).toBe(32);
   });
 
   it('uses the grouped spacing and clearer small text while preserving thin event tracks', () => {
@@ -183,8 +182,8 @@ describe('wallpaper renderer', () => {
     });
     const { text, styles } = inspectCanvas(WallpaperCanvas({ model }));
 
-    expect(styles.some(({ marginTop }) => marginTop === 8)).toBe(true);
-    expect(styles.some(({ marginTop }) => marginTop === 24)).toBe(true);
+    expect(styles.some(({ marginTop }) => marginTop === 20)).toBe(true);
+    expect(styles.some(({ marginTop }) => marginTop === 80)).toBe(true);
     expect(styles.some(({ fontSize }) => fontSize === 34)).toBe(true);
     expect(
       styles.some(({ fontSize, color }) => fontSize === 30 && color === model.theme.text),
@@ -243,13 +242,13 @@ describe('wallpaper renderer', () => {
 
     expect(getWallpaperHeaderCopy(progress)).toEqual({
       title: null,
-      subtitle: `${progress.period.percentComplete}% complete · ${progress.period.daysLeft} days left`,
+      subtitle: 'October · 19% left · 69 days left',
     });
     expect(getWallpaperHeaderCopy(minimal)).toEqual({ title: 'October 2026' });
     expect(getWallpaperHeaderCopy(countdown)).toEqual({ title: 'Next event' });
     expect(getWallpaperHeaderCopy(quarter)).toEqual({
       title: null,
-      subtitle: '25% complete · 69 days left',
+      subtitle: 'October · 75% left · 69 days left',
     });
     expect(getWallpaperHeaderCopy(quarter, 'Custom title')).toEqual({
       title: 'Custom title',
@@ -287,7 +286,7 @@ describe('wallpaper renderer', () => {
     expect(text).toContain('+7 more');
     expect(text).not.toContain('Q4 2026');
     expect(text).not.toMatch(/Oct 2[3-9]/);
-    expect(text).toContain('25% complete · 69 days left');
+    expect(text).toContain('October · 75% left · 69 days left');
     expect(
       styles.filter(({ height, overflow }) => height === 3 && overflow === 'hidden'),
     ).toHaveLength(2);
@@ -321,7 +320,7 @@ describe('wallpaper renderer', () => {
     });
     const { text, styles } = inspectCanvas(WallpaperCanvas({ model }));
 
-    expect(text).toContain('26% complete · 68 days left');
+    expect(text).toContain('October · 74% left · 68 days left');
     expect(text).not.toMatch(/S M T W T F S/);
     expect(text).not.toContain('Q4 2026');
     expect(
@@ -336,7 +335,7 @@ describe('wallpaper renderer', () => {
     const model = buildWallpaperModel({ date, timeRange: 'quarter' });
     const { text } = inspectCanvas(WallpaperCanvas({ model }));
 
-    expect(text).not.toContain('October');
+    expect(text).toContain('October · 75% left · 69 days left');
     expect(text).not.toContain('November');
     expect(text).not.toContain('December');
     const grid = getContinuousDotGridLayout(model);

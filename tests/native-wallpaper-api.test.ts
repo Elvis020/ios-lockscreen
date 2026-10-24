@@ -61,7 +61,7 @@ describe('native wallpaper API', () => {
     expect(
       scene.commands.filter(
         (command: { kind: string; diameter: number }) =>
-          command.kind === 'circle' && command.diameter === 64,
+          command.kind === 'circle' && command.diameter === 72,
       ),
     ).toHaveLength(92);
     expect(text).toContain('Manual milestone');
@@ -117,7 +117,7 @@ describe('native wallpaper API', () => {
     expect(
       scene.commands.filter(
         (command: { kind: string; diameter: number }) =>
-          command.kind === 'circle' && command.diameter === 24,
+          command.kind === 'circle' && command.diameter === 32,
       ),
     ).toHaveLength(365);
     expect(body).not.toContain('January');

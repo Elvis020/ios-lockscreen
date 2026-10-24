@@ -10,7 +10,6 @@ import {
   TIME_RANGES,
 } from '../lib/preferences';
 import {
-  CALENDAR_DOT_GEOMETRY,
   getCalendarComposition,
   getContinuousDotGridLayout,
   FIRST_DOT_TOP,
@@ -150,13 +149,15 @@ describe('native wallpaper scene', () => {
     const model = buildWallpaperModel({ date, timeRange: 'quarter', publicEvents });
     const scene = buildNativeWallpaperScene(model);
     const circles = scene.commands.filter((command) => command.kind === 'circle');
-    const dots = circles.filter(({ diameter }) => diameter === 64);
+    const grid = getContinuousDotGridLayout(model);
+    const outerDiameter = grid.size + 2 * (grid.eventRingGap + grid.eventRingWidth);
+    const innerDiameter = grid.size + 2 * grid.eventRingGap;
+    const dots = circles.filter(({ diameter }) => diameter === grid.size);
 
-    expect(CALENDAR_DOT_GEOMETRY.quarter.size).toBe(64);
     expect(dots).toHaveLength(92);
     expect(dots.filter(({ fill }) => fill === model.theme.current)).toHaveLength(1);
-    expect(circles.filter(({ diameter }) => diameter === 74)).toHaveLength(3);
-    expect(circles.filter(({ diameter }) => diameter === 70)).toHaveLength(3);
+    expect(circles.filter(({ diameter }) => diameter === outerDiameter)).toHaveLength(3);
+    expect(circles.filter(({ diameter }) => diameter === innerDiameter)).toHaveLength(3);
   });
 
   it('keeps a centered summary above the first dot with no generated calendar labels', () => {
@@ -164,19 +165,25 @@ describe('native wallpaper scene', () => {
     const scene = buildNativeWallpaperScene(model);
     const composition = getCalendarComposition(model)!;
     const text = scene.commands.filter((command) => command.kind === 'text');
-    const summary = text.find(({ value }) => value === '26% complete · 68 days left')!;
+    const summary = text.find(
+      ({ value }) => value === 'October · 74% left · 68 days left',
+    )!;
     const weekdays = text.filter(({ value }) =>
       ['S', 'M', 'T', 'W', 'F'].includes(value),
     );
     const countdown = text.find(({ value }) => value === '21d')!;
 
     const firstDot = scene.commands.find(
-      (command) => command.kind === 'circle' && command.diameter === 64,
+      (command) =>
+        command.kind === 'circle' &&
+        command.diameter === getContinuousDotGridLayout(model).size,
     )!;
 
     expect(firstDot.y).toBe(FIRST_DOT_TOP.standard);
     expect(summary.y + summary.height).toBeLessThan(firstDot.y);
-    expect(composition.eventsTop).toBeLessThan(1798);
+    expect(composition.eventsTop).toBeGreaterThanOrEqual(
+      composition.calendarTop + getContinuousDotGridLayout(model).height + 80,
+    );
     expect(summary).toMatchObject({ size: 30, align: 'center' });
     expect(weekdays).toHaveLength(0);
     expect(countdown).toMatchObject({
@@ -222,16 +229,23 @@ describe('native wallpaper scene', () => {
   });
 
   it('keeps both pixel-aligned event rings concentric with their dot', () => {
-    const scene = buildNativeWallpaperScene(buildWallpaperModel({ date, publicEvents }));
+    const model = buildWallpaperModel({ date, publicEvents });
+    const grid = getContinuousDotGridLayout(model);
+    const diameter = grid.size + 2 * (grid.eventRingGap + grid.eventRingWidth);
+    const scene = buildNativeWallpaperScene(model);
     const index = scene.commands.findIndex(
-      (command) => command.kind === 'circle' && command.diameter === 74,
+      (command) => command.kind === 'circle' && command.diameter === diameter,
     );
     const layers = scene.commands
       .slice(index, index + 3)
       .filter((command) => command.kind === 'circle');
 
-    expect(layers.map(({ diameter }) => diameter)).toEqual([74, 70, 64]);
-    const center = { x: layers[0].x + 37, y: layers[0].y + 37 };
+    expect(layers.map(({ diameter }) => diameter)).toEqual([
+      diameter,
+      grid.size + 2 * grid.eventRingGap,
+      grid.size,
+    ]);
+    const center = { x: layers[0].x + diameter / 2, y: layers[0].y + diameter / 2 };
 
     for (const layer of layers) {
       expect({
@@ -249,7 +263,7 @@ describe('native wallpaper scene', () => {
         { name: 'Second event', date: '2026-11-13' },
       ],
     });
-    const { size, eventRingGap, eventRingWidth } = CALENDAR_DOT_GEOMETRY.quarter;
+    const { size, eventRingGap, eventRingWidth } = getContinuousDotGridLayout(model);
     const outerDiameter = size + 2 * (eventRingGap + eventRingWidth);
     const scene = buildNativeWallpaperScene(model);
     const rings = scene.commands.filter(
@@ -272,9 +286,9 @@ describe('native wallpaper scene', () => {
     expect(values).not.toContain('December');
     expect(values).not.toContain('Oct');
     expect(values).not.toContain('Q4 2026');
-    expect(text.find(({ value }) => value === '26% complete · 68 days left')?.align).toBe(
-      'center',
-    );
+    expect(
+      text.find(({ value }) => value === 'October · 74% left · 68 days left')?.align,
+    ).toBe('center');
     expect(values.filter((value) => value === 'S')).toHaveLength(0);
     expect(values.join(' ')).not.toMatch(/2026-\d{2}-\d{2}|Nov 14|Dec 19/);
     expect(Object.keys(scene).sort()).toEqual([
@@ -294,7 +308,8 @@ describe('native wallpaper scene', () => {
       command.kind === 'text' ? [command.value] : [],
     );
 
-    expect(values).toContain('October 2026');
+    expect(values).toContain('October · 23% left · 7 days left');
+    expect(values).not.toContain('October 2026');
     expect(values).not.toContain('October');
     expect(values).toContain('No upcoming events');
     expect(scene.commands.some((command) => command.kind === 'roundRect')).toBe(false);
@@ -314,7 +329,7 @@ describe('native wallpaper scene', () => {
     );
   });
 
-  it('draws regular and leap years as a single twenty-column field without losing tracked markers', () => {
+  it('draws regular and leap years as a single 22-column field without losing tracked markers', () => {
     for (const [year, days] of [
       [2026, 365],
       [2028, 366],
@@ -329,8 +344,9 @@ describe('native wallpaper scene', () => {
         publicEvents: events,
       });
       const scene = buildNativeWallpaperScene(model);
+      const grid = getContinuousDotGridLayout(model);
       const dots = scene.commands.filter(
-        (command) => command.kind === 'circle' && command.diameter === 24,
+        (command) => command.kind === 'circle' && command.diameter === grid.size,
       );
       const monthLabels = scene.commands.filter(
         (command) =>
@@ -340,11 +356,11 @@ describe('native wallpaper scene', () => {
 
       expect(dots).toHaveLength(days);
       expect(monthLabels).toHaveLength(0);
-      expect(new Set(dots.map(({ x }) => x)).size).toBe(20);
-      expect(new Set(dots.map(({ y }) => y)).size).toBe(19);
+      expect(new Set(dots.map(({ x }) => x)).size).toBe(22);
+      expect(new Set(dots.map(({ y }) => y)).size).toBe(17);
       expect(
         scene.commands.filter(
-          (command) => command.kind === 'circle' && command.diameter === 32,
+          (command) => command.kind === 'circle' && command.diameter === grid.size + 8,
         ),
       ).toHaveLength(7);
       expect(scene.commands.length).toBeLessThanOrEqual(600);
@@ -357,8 +373,9 @@ describe('native wallpaper scene', () => {
       timeRange: 'rolling14',
     });
     const scene = buildNativeWallpaperScene(model);
+    const grid = getContinuousDotGridLayout(model);
     const dots = scene.commands.filter(
-      (command) => command.kind === 'circle' && command.diameter === 100,
+      (command) => command.kind === 'circle' && command.diameter === grid.size,
     );
 
     expect(dots).toHaveLength(14);

@@ -47,9 +47,9 @@ The temporary invite-admin endpoint remains available for initial setup. Keep `A
 ## Lock-screen layout calibration
 
 Wallpaper generation remains fixed at 1284×2778 for compatibility. Dot fields begin
-at y=800 in Standard and y=1000 in Large clock, below the estimated native time.
-The generated header begins 80px before that first fill-dot; its grid envelope
-includes an 8px inset for marker rings. Countdown retains its existing 920/1120px
+at y=832 in Standard and y=1032 in Large clock, below the estimated native time.
+The generated 64px caption box ends 20px before the grid's outer ring envelope.
+The envelope uses each range's actual ring outset. Countdown retains its 920/1120px
 content bands. All layouts keep the same 2080px content bottom above notifications.
 
 These positions are calibration defaults, not device detection or universal safe-area claims. iOS can crop or zoom a wallpaper after download, and clock, widget, text-size, and notification choices vary. Use the generated mock-overlay previews as a first check, then verify the raw PNG on the actual target lock screen. Wallpaper settings also appear only after the iOS Shortcut fetches a fresh image; the application cannot force that refresh.
@@ -59,14 +59,18 @@ These positions are calibration defaults, not device detection or universal safe
 The wallpaper is a continuous progress-dot matrix, not a conventional calendar.
 Both renderers draw `model.cells` in chronological row-major order: 7 dots for a
 week, 14 for rolling 14 days, 28–31 for a month, 90–92 for a quarter and 365–366 for
-a year. Columns are 7/7/7/10/20 respectively. There are no month panels, weekday
+a year. Columns are 7/7/7/10/22 respectively. There are no month panels, weekday
 headings, day numbers, or spacer day cells; the final partial row stays left-aligned.
 Colors still distinguish elapsed weekdays/weekends, today and future days. Every
 tracked event can add its ring even when its event row is hidden by the list limit.
 
-Quarter/Year use a centered summary such as `26% complete · 68 days left`, without
-an overview bar or separate quarter/year title. Other range headings and event
-countdowns remain. Progress uses the compact summary header; Countdown retains
+Every dot view uses a centered summary such as `October · 74% left · 68 days left`,
+without an overview bar or separate quarter/year title. The full month is taken
+from the account-local current date, not the period's start. The remaining share is
+`round(daysLeft / totalDays * 100)` and excludes today. Rolling 14 therefore shows
+93% and 13 days remaining after today, resetting with its moving window rather
+than claiming elapsed progress. Explicit custom-title requests retain their override.
+Event countdowns remain unchanged. Countdown retains
 its featured-event display. The real lock-screen clock is never baked into the
 wallpaper. Mock overlays are visual aids without a simulated widget row, not proof
 of a particular phone's font, widget or crop behavior.
@@ -78,11 +82,12 @@ thin, three-pixel progress track on the full-resolution image. Compact rows use
 large countdown display has no event timer line; additional Countdown events do.
 
 Every active presentation honors the same saved display count: 1–5 events, default
-2, for either clock profile. One or two list events retain the existing 204px rail.
-Larger lists use full-width rows when the available band allows, first tightening
+2, for either clock profile. The layout reserves the actual rail height (at least
+76px for an empty state), rather than an unused fixed 204px slot. Lists use
+full-width rows when the available band allows, first tightening
 76px rows/20px gaps to 68px rows/14px gaps if needed. Dense combinations then use
 two columns with 52px rows, a 28px gutter and the same thin timers. This preserves
-dot sizes instead of shrinking the calendar to fit the count. Countdown keeps its first event
+bounded dot sizes and ring separation while fitting the selected count. Countdown keeps its first event
 as the hero and lists the remainder beneath it. `+N more` counts all remaining
 upcoming events. This is a display limit, not an account limit; every eligible
 event still contributes its calendar marker. Dates remain stored and all active
@@ -107,17 +112,22 @@ still private data. Native responses and errors always disable browser/CDN cachi
 Only the existing read-only wallpaper key is accepted for personalized native data;
 legacy management-token wallpaper URLs continue to work for PNG only. Supported
 native combinations cover all five ranges, four presentations and two clock profiles.
-Year uses a single twenty-column matrix; rolling 14 days uses two rows of seven dots.
+Year uses a single twenty-two-column matrix; rolling 14 days uses two rows of seven dots.
 The existing scene-v1 adapter remains compatible. Oversized public marker scenes
 return a private, non-cacheable 422 rather than dropping markers. Unknown `format`
 values retain the existing PNG behavior for compatibility.
 
 Both renderers use shared geometry and event-cap calculations in `wallpaperLayout.ts`.
 Calendar/Hybrid/Progress content is top-anchored below the clock; compact event slots have
-independent preferred positions (1680px standard, 1772px large-clock) and move down
-when a grid needs more clearance or move up to fit a taller event list. Shared
-integer-pixel positions fix each range/profile's size and pitch independently of
-presentation and event count; no spread-to-fill rows or month-group geometry remain.
+independent preferred positions (1720px standard, 1812px large-clock) and move down
+when a grid needs clearance or up to fit a taller event list. A single pure solver
+chooses an event density and fits the largest even dot diameter within range caps,
+bounded horizontal/vertical gaps, an 80px clear ring-to-rail gap, and the 2080px
+bottom. The ring-to-rail gap cannot exceed 240px: sparse views keep their events
+closer instead of ballooning dots or leaving an oversized blank area. Year dots are 30–32px
+with 12–16px horizontal fill gaps, larger and tighter than the former 24px/30px.
+Geometry can adapt to profile and actual event count but not to dot-bearing
+presentation alone. No spread-to-fill rows or month-group geometry remain.
 The native scene is interpreted on the iPhone by a strict, network-free Scriptable
 script using the native Font APIs. The script returns PNG bytes as base64 text to
 Shortcuts without saving files or uploading font data. The original PNG pathway and

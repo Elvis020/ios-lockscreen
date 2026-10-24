@@ -19,32 +19,44 @@ including saved built-in/custom themes. The current Telegram/dashboard settings
 remain authoritative; a preset is not silently replaced by a different view.
 
 Calendar/Hybrid/Progress use one continuous field of chronological dots. Week and
-rolling 14 days use seven columns, Month uses seven, Quarter ten, and Year twenty.
+rolling 14 days use seven columns, Month uses seven, Quarter ten, and Year twenty-two.
 There are exactly as many dots as days in the selected period: no month panels,
 weekday labels, date numbers, or leading/trailing blank day cells. A partial last
 row stays left-aligned with the first row.
 
-The first fill-dot starts at y=800 for Standard or y=1000 for Large clock on the
-1284×2778 image, consistently across ranges. The modest range/progress header sits
-above it. These are calibration targets beneath an estimated clock, not device
+The first fill-dot starts at y=832 for Standard or y=1032 for Large clock on the
+1284×2778 image, consistently across ranges. The centered caption sits above it,
+with more clearance below the clock. These are calibration targets, not device
 detection; widgets, iOS zoom/cropping and clock customization need phone testing.
-Event rows have an independent preferred anchor and remain above notifications.
-Quarter restores larger 64px dots (52px with Large clock), while event timer lines
-remain 3px thin. Compact lists
+Event rows have independent preferred anchors at y=1720/1812, moving as needed to
+keep at least 80px clear after the last dot's outer ring and finish by y=2080.
+The gap is capped at 240px so Week and Rolling 14 do not leave an oversized empty
+area before their events.
+Event timer lines remain 3px thin. Compact lists
 default to two events plus `+N more`. Set 1–5 using `/eventcount` or **Events shown**
 on the dashboard; this preference survives view changes. Rows stay full width
 while space allows, tightening their vertical gaps before using two columns for
-the densest combinations. Calendar dot sizes are preserved. Countdown counts its
+the densest combinations. Dot diameter and axis gaps adapt within bounded ranges,
+without stretching circles or dropping days/events. Countdown counts its
 featured event as the first, with additional events beneath it. Event dates and
 the redundant quarter heading stay hidden.
 
-Month uses 92px dots and a 128px vertical pitch (80px / 112px with Large clock).
-Quarter uses an 88px pitch (72px with Large clock). Year uses 24px dots in nineteen
-rows with a 38px pitch, including leap years. Week and rolling 14 days use 100px
-dots; the latter has two rows. Geometry depends only on range and clock profile,
-not presentation or event count, so changing a setting cannot shrink or vertically
-stretch the dots. Native dots and concentric rings align to integer pixels.
-Quarter/Year retain a centered progress caption without an overview bar. Saved
+The shared layout solver fits the dot field and actual event rail together. It
+tries full-width normal rows, then snug rows, then two-column dense rows, keeping
+the largest even dot diameter that fits each candidate's height and the available
+width. Week/rolling dots stay within 112–124px, Month 96–108px, Quarter 56–72px and
+Year 30–32px. Axis gaps are bounded rather than spread-to-fill: a sparse Week stays
+compact, while dense views use more of the available height. Year has seventeen
+rows, including leap years, with a maximum 16px horizontal fill gap instead of the
+old 30px gap. The selected count and actual events can affect geometry; switching
+between Calendar/Hybrid/Progress alone cannot. Native dots and rings stay integer-aligned.
+
+Every dot view uses one centered caption such as
+`October · 74% left · 68 days left`. The month is the account-local current month;
+percentage and days refer to the selected period, excluding today. For Rolling 14,
+this is `93% left · 13 days left`: a moving window, not accumulating elapsed progress.
+An explicit public custom title still overrides the default caption. No overview
+bar or redundant year/quarter heading is added. Saved
 Year/progress settings render identically to Year/calendar. Countdown retains its
 featured-event presentation rather than adding a dot field.
 

@@ -14,57 +14,51 @@ export const LOCK_SCREEN_CONTENT_BANDS = {
 
 export const CALENDAR_DOT_GEOMETRY = {
   shape: 'circle',
-  week: { size: 100, compactSize: 92, eventRingGap: 5, eventRingWidth: 3 },
-  month: { size: 92, eventRingGap: 4, eventRingWidth: 3 },
-  quarter: { size: 64, eventRingGap: 3, eventRingWidth: 2 },
-  year: { size: 24, eventRingGap: 2, eventRingWidth: 2 },
+  week: {
+    size: 124,
+    minSize: 112,
+    columns: 7,
+    gapX: [28, 40],
+    gapY: [44, 64],
+    eventRingGap: 5,
+    eventRingWidth: 3,
+  },
+  month: {
+    size: 108,
+    minSize: 96,
+    columns: 7,
+    gapX: [38, 48],
+    gapY: [28, 38],
+    eventRingGap: 4,
+    eventRingWidth: 3,
+  },
+  quarter: {
+    size: 72,
+    minSize: 56,
+    columns: 10,
+    gapX: [26, 36],
+    gapY: [16, 26],
+    eventRingGap: 3,
+    eventRingWidth: 2,
+  },
+  year: {
+    size: 32,
+    minSize: 30,
+    columns: 22,
+    gapX: [12, 16],
+    gapY: [10, 12],
+    eventRingGap: 2,
+    eventRingWidth: 2,
+  },
 } as const;
 
 // Calibration targets, not device detection. Keep both profiles above notifications.
-export const FIRST_DOT_TOP = { standard: 800, 'large-clock': 1000 } as const;
+export const FIRST_DOT_TOP = { standard: 832, 'large-clock': 1032 } as const;
+export const DOT_EVENTS_GAP = 80;
+export const MAX_DOT_EVENTS_GAP = 240;
 
 export function getContinuousDotGridLayout(model: WallpaperModel) {
-  const largeClock = model.lockScreenProfile === 'large-clock';
-  const range = model.timeRange;
-  const geometry =
-    range === 'year'
-      ? { ...CALENDAR_DOT_GEOMETRY.year, columns: 20, pitchX: 54, pitchY: 38 }
-      : range === 'quarter'
-        ? {
-            ...CALENDAR_DOT_GEOMETRY.quarter,
-            size: largeClock ? 52 : 64,
-            columns: 10,
-            pitchX: 109,
-            pitchY: largeClock ? 72 : 88,
-          }
-        : range === 'month'
-          ? {
-              ...CALENDAR_DOT_GEOMETRY.month,
-              size: largeClock ? 80 : 92,
-              columns: 7,
-              pitchX: 159,
-              pitchY: largeClock ? 112 : 128,
-            }
-          : { ...CALENDAR_DOT_GEOMETRY.week, columns: 7, pitchX: 157, pitchY: 144 };
-  const rows = Math.ceil(model.cells.length / geometry.columns);
-  const ringOutset = geometry.eventRingGap + geometry.eventRingWidth;
-  const width = (geometry.columns - 1) * geometry.pitchX + geometry.size + ringOutset * 2;
-  const left =
-    Math.floor((WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT - width) / 2) + ringOutset;
-  const top = FIRST_DOT_TOP[model.lockScreenProfile] - 8;
-  const height = 16 + Math.max(0, rows - 1) * geometry.pitchY + geometry.size;
-
-  return {
-    ...geometry,
-    rows,
-    top,
-    width,
-    height,
-    positions: model.cells.map((_, index) => ({
-      x: left + (index % geometry.columns) * geometry.pitchX,
-      y: 8 + Math.floor(index / geometry.columns) * geometry.pitchY,
-    })),
-  };
+  return solveDotComposition(model).grid;
 }
 
 export interface WallpaperLayoutBounds {
@@ -117,21 +111,38 @@ export function isGroupedCalendarLayout(model: WallpaperModel): boolean {
 }
 
 export function getWallpaperEventLayout(model: WallpaperModel): WallpaperEventLayout {
-  const largeClock = model.lockScreenProfile === 'large-clock';
+  if (isGroupedCalendarLayout(model)) {
+    return solveDotComposition(model).events;
+  }
+
   const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
+  const availableHeight =
+    band.bottom - band.top - HEADER_HEIGHT - HEADER_TO_PRESENTATION_GAP - 240 - 28;
+  const normal = createEventLayout(model, 'normal');
+
+  if (normal.visibleCount <= 2 || normal.contentHeight <= availableHeight) {
+    return normal;
+  }
+
+  const snug = createEventLayout(model, 'snug');
+
+  return snug.contentHeight <= availableHeight ? snug : createEventLayout(model, 'dense');
+}
+
+type EventDensity = 'normal' | 'snug' | 'dense';
+
+function createEventLayout(
+  model: WallpaperModel,
+  density: EventDensity,
+): WallpaperEventLayout {
+  const largeClock = model.lockScreenProfile === 'large-clock';
   const compact = model.presentation !== 'agenda' && model.presentation !== 'minimal';
   const limit = model.eventCount;
   const startIndex = model.presentation === 'countdown' ? 1 : 0;
   const visibleCount = Math.max(0, Math.min(limit, model.events.length) - startIndex);
   const overflow = Math.max(0, model.events.length - limit);
-  const listHeight = (height: number, gap: number) =>
-    visibleCount * height + Math.max(0, visibleCount - 1) * gap + (overflow ? 32 : 0);
-  const grid = getContinuousDotGridLayout(model);
-  const availableHeight = isGroupedCalendarLayout(model)
-    ? band.bottom - grid.top - grid.height - 24
-    : band.bottom - band.top - HEADER_HEIGHT - HEADER_TO_PRESENTATION_GAP - 240 - 28;
-  const snug = compact && visibleCount > 2 && listHeight(76, 20) > availableHeight;
-  const dense = snug && listHeight(68, 14) > availableHeight;
+  const snug = compact && density === 'snug';
+  const dense = compact && density === 'dense';
   const columns = dense ? 2 : 1;
   const rowHeight = dense ? 52 : snug ? 68 : compact ? 76 : 144;
   const rowGap = dense ? 6 : snug ? 14 : compact ? 20 : 40;
@@ -147,7 +158,7 @@ export function getWallpaperEventLayout(model: WallpaperModel): WallpaperEventLa
     rowHeight,
     rowGap,
     overflowHeight,
-    slotHeight: Math.max(204, contentHeight),
+    slotHeight: Math.max(isGroupedCalendarLayout(model) ? 76 : 204, contentHeight),
     sectionGap: largeClock && model.presentation === 'calendar' ? 16 : 24,
     lift: model.presentation === 'calendar' ? (largeClock ? 48 : 32) : 0,
     columns,
@@ -164,6 +175,108 @@ export function getWallpaperEventLayout(model: WallpaperModel): WallpaperEventLa
     overflow,
     contentHeight,
   };
+}
+
+function fitDotGrid(model: WallpaperModel, events: WallpaperEventLayout) {
+  const geometry =
+    CALENDAR_DOT_GEOMETRY[model.timeRange === 'rolling14' ? 'week' : model.timeRange];
+  const { columns, eventRingGap, eventRingWidth } = geometry;
+  const rows = Math.ceil(model.cells.length / columns);
+  const ringOutset = eventRingGap + eventRingWidth;
+  const top = FIRST_DOT_TOP[model.lockScreenProfile] - ringOutset;
+  const contentWidth = WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT;
+  const availableHeight =
+    LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile].bottom -
+    top -
+    DOT_EVENTS_GAP -
+    events.slotHeight;
+  const widthLimit =
+    (contentWidth - ringOutset * 2 - (columns - 1) * geometry.gapX[0]) / columns;
+  const heightLimit =
+    (availableHeight - ringOutset * 2 - (rows - 1) * geometry.gapY[0]) / rows;
+  const size = Math.floor(Math.min(geometry.size, widthLimit, heightLimit) / 2) * 2;
+
+  if (size < geometry.minSize) {
+    return null;
+  }
+
+  // Bounded gaps use available space without stretching sparse views to fill it.
+  const gapX = Math.min(
+    geometry.gapX[1],
+    Math.floor((contentWidth - ringOutset * 2 - columns * size) / (columns - 1)),
+  );
+  const gapY =
+    rows === 1
+      ? geometry.gapY[0]
+      : Math.min(
+          geometry.gapY[1],
+          Math.floor((availableHeight - ringOutset * 2 - rows * size) / (rows - 1)),
+        );
+  const pitchX = size + gapX;
+  const pitchY = size + gapY;
+  const width = (columns - 1) * pitchX + size + ringOutset * 2;
+  const height = (rows - 1) * pitchY + size + ringOutset * 2;
+  const left = Math.floor((contentWidth - width) / 2) + ringOutset;
+
+  return {
+    size,
+    columns,
+    rows,
+    pitchX,
+    pitchY,
+    eventRingGap,
+    eventRingWidth,
+    top,
+    width,
+    height,
+    positions: model.cells.map((_, index) => ({
+      x: left + (index % columns) * pitchX,
+      y: ringOutset + Math.floor(index / columns) * pitchY,
+    })),
+  };
+}
+
+function solveDotComposition(model: WallpaperModel) {
+  // Candidates are independent of the grid: never recurse between grid and rail sizing.
+  const densities: EventDensity[] = ['normal', 'snug', 'dense'];
+
+  for (const density of densities) {
+    const events = createEventLayout(model, density);
+    const grid = fitDotGrid(model, events);
+
+    if (!grid) {
+      continue;
+    }
+
+    const bottom = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile].bottom;
+    const preferredEventsTop = model.lockScreenProfile === 'large-clock' ? 1812 : 1720;
+    const eventsTop = Math.max(
+      Math.min(
+        preferredEventsTop,
+        grid.top + grid.height + MAX_DOT_EVENTS_GAP,
+        bottom - events.slotHeight,
+      ),
+      grid.top + grid.height + DOT_EVENTS_GAP,
+    );
+    const headerHeight = 64;
+    const headerGap = 20;
+    const top = grid.top - headerHeight - headerGap;
+    const composition: CalendarComposition = {
+      top,
+      height: eventsTop + events.slotHeight - top,
+      headerHeight,
+      headerGap,
+      calendarTop: grid.top,
+      calendarHeight: eventsTop - DOT_EVENTS_GAP - grid.top,
+      eventGap: DOT_EVENTS_GAP,
+      eventsTop,
+      eventsHeight: events.slotHeight,
+    };
+
+    return { grid, events, composition };
+  }
+
+  throw new Error('Unable to fit the dot field and selected events in the content band');
 }
 
 export function getCountdownComposition(model: WallpaperModel) {
@@ -221,34 +334,7 @@ export function getCalendarComposition(
     return null;
   }
 
-  const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
-  const headerHeight = 64;
-  const headerGap = 8;
-  const grid = getContinuousDotGridLayout(model);
-  const requiredHeight = grid.height;
-  const calendarTop = grid.top;
-  const top = calendarTop - headerHeight - headerGap;
-  const eventGap = 24;
-  const preferredEventsTop = model.lockScreenProfile === 'large-clock' ? 1772 : 1680;
-  const eventsHeight = getWallpaperEventLayout(model).slotHeight;
-  const eventsTop = Math.max(
-    Math.min(preferredEventsTop, band.bottom - eventsHeight),
-    calendarTop + requiredHeight + eventGap,
-  );
-  const calendarHeight = eventsTop - eventGap - calendarTop;
-  const height = eventsTop + eventsHeight - top;
-
-  return {
-    top,
-    height,
-    headerHeight,
-    headerGap,
-    calendarTop,
-    calendarHeight,
-    eventGap,
-    eventsTop,
-    eventsHeight,
-  };
+  return solveDotComposition(model).composition;
 }
 
 export function getWallpaperHeaderCopy(
@@ -259,24 +345,18 @@ export function getWallpaperHeaderCopy(
     return { title: title || 'Next event' };
   }
 
-  if (!title && model.presentation === 'progress') {
-    return {
-      title: null,
-      subtitle:
-        model.period.kind === 'rolling'
-          ? '14-day outlook'
-          : `${model.period.percentComplete}% complete · ${formatPeriodRemaining(model.period.daysLeft)}`,
-    };
-  }
+  if (!title && isGroupedCalendarLayout(model)) {
+    const month = new Intl.DateTimeFormat('en-US', {
+      month: 'long',
+      timeZone: 'UTC',
+    }).format(new Date(`${model.period.currentDate}T12:00:00Z`));
+    const percentLeft = Math.round(
+      (model.period.daysLeft / model.period.totalDays) * 100,
+    );
 
-  if (
-    !title &&
-    ['quarter', 'year'].includes(model.timeRange) &&
-    isGroupedCalendarLayout(model)
-  ) {
     return {
       title: null,
-      subtitle: `${model.period.percentComplete}% complete · ${formatPeriodRemaining(model.period.daysLeft)}`,
+      subtitle: `${month} · ${percentLeft}% left · ${formatPeriodRemaining(model.period.daysLeft)}`,
     };
   }
 
