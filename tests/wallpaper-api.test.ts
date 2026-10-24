@@ -22,4 +22,21 @@ describe('wallpaper API', () => {
       0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
     ]);
   });
+
+  it('renders an opt-in iOS overlay for public product previews', async () => {
+    const response = await handler(
+      new Request(
+        'https://example.com/api/wallpaper?preset=hybrid&preview=ios&events=Launch:2026-10-25',
+      ),
+    );
+    const image = new Uint8Array(await response.arrayBuffer());
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe(
+      'public, max-age=0, must-revalidate',
+    );
+    expect([...image.slice(0, 8)]).toEqual([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ]);
+  });
 });

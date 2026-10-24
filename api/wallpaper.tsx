@@ -84,6 +84,7 @@ export default async function handler(req: Request) {
       dayOverride,
     });
     const title = url.searchParams.get('title')?.slice(0, 40);
+    const mockIosOverlay = !personalized && url.searchParams.get('preview') === 'ios';
 
     if (native) {
       return nativeJsonResponse(buildNativeWallpaperScene(model, title));
@@ -91,6 +92,7 @@ export default async function handler(req: Request) {
 
     const response = createWallpaperImageResponse(model, {
       title,
+      mockIosOverlay,
     });
 
     setCacheHeaders(response, personalized);

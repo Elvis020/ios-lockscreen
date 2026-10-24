@@ -1,5 +1,8 @@
 {
   "buildCommand": null,
   "outputDirectory": null,
-  "rewrites": [{ "source": "/", "destination": "/api" }]
+  "rewrites": [
+    { "source": "/", "destination": "/api/landing" },
+    { "source": "/app", "destination": "/api" }
+  ]
 }

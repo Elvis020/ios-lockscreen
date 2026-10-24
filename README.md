@@ -38,7 +38,9 @@ cp .env.example .env
 npx vercel dev --yes --listen 3000
 ```
 
-Add your credentials to `.env`, then open [http://localhost:3000](http://localhost:3000).
+Add your credentials to `.env`, then open [http://localhost:3000](http://localhost:3000)
+for the public product page or [http://localhost:3000/app](http://localhost:3000/app)
+for the account dashboard.
 
 The public wallpaper works without Redis. Personalized wallpapers and account features require Upstash Redis.
 
@@ -70,7 +72,9 @@ The command writes each preset as a 1284×2778 PNG, plus a second copy with mock
 
 | Route                             | Purpose                          |
 | --------------------------------- | -------------------------------- |
-| `/`                               | Dashboard                        |
+| `/`                               | Public product landing page      |
+| `/app`                            | Account setup and dashboard      |
+| `/api`                            | Legacy dashboard route           |
 | `/api/wallpaper`                  | Public fallback wallpaper        |
 | `/api/wallpaper?wallpaperKey=...` | Personalized read-only wallpaper |
 | `/api/telegram/webhook`           | Telegram updates                 |

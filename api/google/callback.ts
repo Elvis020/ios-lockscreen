@@ -25,11 +25,11 @@ export default async function handler(req: Request) {
   try {
     const returnOrigin = await completeGoogleAuthorization(state, code, browserNonce);
 
-    return redirectWithClearedCookie(`${returnOrigin}/api?google=connected`);
+    return redirectWithClearedCookie(`${returnOrigin}/app?google=connected`);
   } catch (error) {
     console.error('Google authorization callback failed:', error);
 
-    return redirectWithClearedCookie(`${url.origin}/api?google=error`);
+    return redirectWithClearedCookie(`${url.origin}/app?google=error`);
   }
 }
 
