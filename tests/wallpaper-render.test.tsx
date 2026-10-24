@@ -1,6 +1,11 @@
 import { isValidElement, type CSSProperties, type ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
-import { LOCK_SCREEN_PROFILES, PRESENTATIONS, TIME_RANGES } from '../lib/preferences';
+import {
+  EVENT_COUNTS,
+  LOCK_SCREEN_PROFILES,
+  PRESENTATIONS,
+  TIME_RANGES,
+} from '../lib/preferences';
 import { buildWallpaperModel } from '../lib/wallpaperModel';
 import { getMonthCollectionLayout } from '../lib/wallpaperLayout';
 import {
@@ -28,29 +33,73 @@ const events = [
 ];
 
 describe('wallpaper renderer', () => {
-  it('materializes native-size PNGs for all sixty range/presentation/profile layouts', async () => {
-    for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
-      for (const timeRange of TIME_RANGES) {
-        for (const presentation of PRESENTATIONS) {
-          const model = buildWallpaperModel({
-            date,
-            timeRange,
-            presentation,
-            lockScreenProfile,
-            publicEvents: events,
-          });
-          const response = createWallpaperImageResponse(model);
-          const bytes = new Uint8Array(await response.arrayBuffer());
+  it.each([2, 5])(
+    'materializes native-size PNGs for every active layout with event count %i',
+    async (eventCount) => {
+      for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+        for (const timeRange of TIME_RANGES) {
+          for (const presentation of PRESENTATIONS) {
+            const model = buildWallpaperModel({
+              date,
+              timeRange,
+              presentation,
+              lockScreenProfile,
+              eventCount,
+              publicEvents: events,
+            });
+            const response = createWallpaperImageResponse(model);
+            const bytes = new Uint8Array(await response.arrayBuffer());
 
-          expect(response.headers.get('content-type')).toContain('image/png');
-          expect(Array.from(bytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
-          expect(readPngDimension(bytes, 16)).toBe(WALLPAPER_WIDTH);
-          expect(readPngDimension(bytes, 20)).toBe(WALLPAPER_HEIGHT);
-          expect(bytes.length).toBeGreaterThan(10_000);
+            expect(response.headers.get('content-type')).toContain('image/png');
+            expect(Array.from(bytes.slice(0, 4))).toEqual([0x89, 0x50, 0x4e, 0x47]);
+            expect(readPngDimension(bytes, 16)).toBe(WALLPAPER_WIDTH);
+            expect(readPngDimension(bytes, 20)).toBe(WALLPAPER_HEIGHT);
+            expect(bytes.length).toBeGreaterThan(10_000);
+          }
         }
       }
-    }
-  }, 60_000);
+    },
+    60_000,
+  );
+
+  it.each(EVENT_COUNTS)(
+    'shows exactly the chosen %i events and overflow in every PNG layout',
+    (eventCount) => {
+      for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+        for (const timeRange of TIME_RANGES) {
+          for (const presentation of PRESENTATIONS) {
+            const model = buildWallpaperModel({
+              date,
+              timeRange,
+              presentation,
+              lockScreenProfile,
+              eventCount,
+              publicEvents: events,
+            });
+            const { text, styles } = inspectCanvas(WallpaperCanvas({ model }));
+
+            for (const [index, event] of model.events.entries()) {
+              expect(
+                text.includes(event.name),
+                `${timeRange}/${presentation}/${lockScreenProfile}/${eventCount}/${event.name}`,
+              ).toBe(index < eventCount);
+            }
+            expect(text).toContain(`+${events.length - eventCount} more`);
+            const rowCount = eventCount - (presentation === 'countdown' ? 1 : 0);
+
+            expect(
+              styles.filter(
+                ({ height, overflow }) => height === 3 && overflow === 'hidden',
+              ),
+            ).toHaveLength(rowCount);
+            const layout = getWallpaperEventLayout(model);
+
+            expect(layout.contentHeight).toBeLessThanOrEqual(layout.slotHeight);
+          }
+        }
+      }
+    },
+  );
 
   it('builds every range and presentation combination', () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
@@ -146,7 +195,7 @@ describe('wallpaper renderer', () => {
     expect(text).not.toContain('Q4 2026');
   });
 
-  it('spaces grouped PNG dot rows while preserving legacy Progress spacing', () => {
+  it('spaces grouped PNG dot rows consistently across calendar presentations', () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
       for (const timeRange of ['month', 'quarter'] as const) {
         for (const presentation of ['calendar', 'hybrid', 'progress'] as const) {
@@ -191,7 +240,10 @@ describe('wallpaper renderer', () => {
 
     const quarter = buildWallpaperModel({ date, timeRange: 'quarter' });
 
-    expect(getWallpaperHeaderCopy(progress)).toEqual({ title: '2026' });
+    expect(getWallpaperHeaderCopy(progress)).toEqual({
+      title: null,
+      subtitle: `${progress.period.percentComplete}% complete · ${progress.period.daysLeft} days left`,
+    });
     expect(getWallpaperHeaderCopy(minimal)).toEqual({ title: 'October 2026' });
     expect(getWallpaperHeaderCopy(countdown)).toEqual({ title: 'Next event' });
     expect(getWallpaperHeaderCopy(quarter)).toEqual({
@@ -204,20 +256,12 @@ describe('wallpaper renderer', () => {
     expect(getWallpaperHeaderCopy(countdown, 'Launch focus').title).toBe('Launch focus');
   });
 
-  it('caps event rows according to the reserved space in each presentation', () => {
+  it('defaults to two events independently of presentation and clock profile', () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
       for (const presentation of PRESENTATIONS) {
         const model = buildWallpaperModel({ date, presentation, lockScreenProfile });
-        const expected = {
-          calendar: 2,
-          hybrid: 2,
-          agenda: lockScreenProfile === 'large-clock' ? 4 : 5,
-          countdown: 1,
-          minimal: 1,
-          progress: 0,
-        };
 
-        expect(getWallpaperEventLayout(model).limit).toBe(expected[presentation]);
+        expect(getWallpaperEventLayout(model).limit).toBe(2);
       }
     }
   });

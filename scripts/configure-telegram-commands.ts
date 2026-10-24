@@ -16,6 +16,10 @@ export const TELEGRAM_COMMANDS: TelegramCommand[] = [
   { command: 'url', description: 'Show the current wallpaper URL' },
   { command: 'add', description: 'Add an event: YYYY-MM-DD Event name' },
   { command: 'events', description: 'List manual events and their numbers' },
+  {
+    command: 'eventcount',
+    description: 'Set events shown in every view: 1 to 5 (default 2)',
+  },
   { command: 'delete', description: 'Delete an event by its /events number' },
   { command: 'view', description: 'Choose a wallpaper preset' },
   { command: 'range', description: 'Set the wallpaper time range' },

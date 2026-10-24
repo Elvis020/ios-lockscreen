@@ -1,5 +1,7 @@
 import {
   MAX_CUSTOM_THEMES,
+  DEFAULT_EVENT_COUNT,
+  isEventCount,
   listAvailableThemeIds,
   type WallpaperTheme,
 } from './preferences';
@@ -66,6 +68,7 @@ export async function createUser(
       timeRange: 'month',
       presentation: 'hybrid',
       lockScreenProfile: 'standard',
+      eventCount: DEFAULT_EVENT_COUNT,
       timeZone,
       customThemes: [],
       events: [],
@@ -211,7 +214,12 @@ export async function updatePreferences(
   preferences: Partial<
     Pick<
       UserData,
-      'theme' | 'timeRange' | 'presentation' | 'lockScreenProfile' | 'timeZone'
+      | 'theme'
+      | 'timeRange'
+      | 'presentation'
+      | 'lockScreenProfile'
+      | 'timeZone'
+      | 'eventCount'
     >
   >,
   completion?: MutationCompletion,
@@ -241,6 +249,14 @@ export async function updatePreferences(
 
       if (preferences.timeZone) {
         user.timeZone = preferences.timeZone;
+      }
+
+      if (preferences.eventCount !== undefined) {
+        if (!isEventCount(preferences.eventCount)) {
+          throw new Error('Event count must be a whole number from 1 to 5');
+        }
+
+        user.eventCount = preferences.eventCount;
       }
     },
     completion,

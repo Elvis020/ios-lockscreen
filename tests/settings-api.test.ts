@@ -25,10 +25,15 @@ describe('settings API', () => {
       presentation: 'calendar',
       lockScreenProfile: 'standard',
       viewMode: 'month',
+      eventCount: 2,
     });
     expect(body.wallpaperOptions.timeRanges).toContain('year');
     expect(body.wallpaperOptions.presentations).toContain('hybrid');
-    expect(body.wallpaperOptions.presets).toHaveLength(9);
+    expect(body.wallpaperOptions.presets).toHaveLength(7);
+    expect(body.wallpaperOptions.presentations).not.toContain('agenda');
+    expect(body.wallpaperOptions.presentations).not.toContain('minimal');
+    expect(body.themes).toContain('minimal');
+    expect(body.wallpaperOptions.eventCounts).toEqual([1, 2, 3, 4, 5]);
   });
 
   it('updates arbitrary dimensions and accepts a shared preset', async () => {
@@ -39,16 +44,18 @@ describe('settings API', () => {
     const arbitrary = await handler(
       request('PATCH', {
         timeRange: 'year',
-        presentation: 'agenda',
+        presentation: 'hybrid',
         lockScreenProfile: 'large-clock',
+        eventCount: 5,
       }),
     );
 
     expect(arbitrary.status).toBe(200);
     expect(await getUser('owner')).toMatchObject({
       timeRange: 'year',
-      presentation: 'agenda',
+      presentation: 'hybrid',
       lockScreenProfile: 'large-clock',
+      eventCount: 5,
     });
 
     const preset = await handler(request('PATCH', { preset: 'hybrid' }));
@@ -58,8 +65,88 @@ describe('settings API', () => {
       timeRange: 'month',
       presentation: 'hybrid',
       lockScreenProfile: 'large-clock',
+      eventCount: 5,
     });
   });
+
+  it.each([0, 6, -1, 2.5, '3', null, [], {}])(
+    'rejects invalid event count %j atomically',
+    async (eventCount) => {
+      await seedLegacyUser();
+      const { default: handler } = await import('../api/settings');
+      const { getUser } = await import('../lib/tokenManager');
+
+      await handler(request('GET'));
+      const before = await getUser('owner');
+      const response = await handler(
+        request('PATCH', { eventCount, theme: 'ocean', preset: 'year' }),
+      );
+
+      expect(response.status).toBe(400);
+      expect(await getUser('owner')).toEqual(before);
+    },
+  );
+
+  it('shares a dashboard count with Telegram and native wallpaper fetches', async () => {
+    await seedLegacyUser();
+    const raw = await redis.get<Record<string, unknown>>('user:owner');
+
+    await redis.set('user:owner', {
+      ...raw,
+      events: Array.from({ length: 7 }, (_, index) => ({
+        name: `Shared event ${index + 1}`,
+        date: '2099-12-01',
+      })),
+    });
+    const { default: handler } = await import('../api/settings');
+    const { handleLinkedTelegramCommand } = await import('../lib/telegramBot');
+    const { default: wallpaper } = await import('../api/wallpaper');
+
+    expect((await handler(request('PATCH', { eventCount: 5 }))).status).toBe(200);
+    await handleLinkedTelegramCommand('owner', '/view', ['year'], 'https://example.com');
+    const settings = await (await handler(request('GET'))).json();
+    const response = await wallpaper(
+      new Request(`${settings.wallpaperUrl}&format=native&eventCount=1`),
+    );
+    const scene = await response.json();
+    const values = scene.commands
+      .filter((command: { kind: string }) => command.kind === 'text')
+      .map((command: { value: string }) => command.value);
+
+    expect(settings.eventCount).toBe(5);
+    expect(response.status).toBe(200);
+    expect(
+      values.filter((value: string) => value.startsWith('Shared event')),
+    ).toHaveLength(5);
+    expect(values).toContain('+2 more');
+    expect(scene.version).toBe(1);
+    expect(Object.keys(scene).sort()).toEqual([
+      'background',
+      'commands',
+      'height',
+      'version',
+      'width',
+    ]);
+  });
+
+  it.each(['agenda', 'minimal'])(
+    'rejects the retired %s view without changing preferences',
+    async (retired) => {
+      await seedLegacyUser();
+      const { default: handler } = await import('../api/settings');
+      const { getUser } = await import('../lib/tokenManager');
+
+      await handler(request('GET'));
+      const before = await getUser('owner');
+
+      for (const field of ['preset', 'presentation']) {
+        const response = await handler(request('PATCH', { [field]: retired }));
+
+        expect(response.status).toBe(400);
+        expect(await getUser('owner')).toEqual(before);
+      }
+    },
+  );
 });
 
 async function seedLegacyUser(): Promise<void> {

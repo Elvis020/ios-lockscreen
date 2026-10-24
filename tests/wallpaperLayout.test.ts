@@ -15,6 +15,100 @@ import { buildWallpaperModel } from '../lib/wallpaperModel';
 const date = new Date('2026-10-24T12:00:00Z');
 
 describe('grouped calendar composition', () => {
+  it('packs Year into three columns and four fixed-gap quarter rows across calendar alignments', () => {
+    for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+      for (let year = 2020; year <= 2040; year += 1) {
+        const model = buildWallpaperModel({
+          date: new Date(`${year}-01-01T12:00:00Z`),
+          timeRange: 'year',
+          lockScreenProfile,
+          eventCount: 5,
+          publicEvents: Array.from({ length: 7 }, (_, index) => ({
+            name: `Year milestone ${index}`,
+            date: `${year}-12-25`,
+          })),
+        });
+        const composition = getCalendarComposition(model)!;
+        const layout = getMonthCollectionLayout(model, composition.calendarHeight);
+        const stretched = getMonthCollectionLayout(
+          model,
+          composition.calendarHeight + 500,
+        );
+
+        expect(layout.columns).toBe(3);
+        expect(layout.rows).toBe(4);
+        expect(layout.geometry.dot.size).toBe(
+          lockScreenProfile === 'large-clock' ? 14 : 16,
+        );
+        expect(layout.rowGap).toBe(lockScreenProfile === 'large-clock' ? 6 : 10);
+        expect(stretched.rowLayouts).toEqual(layout.rowLayouts);
+        for (const [index, row] of layout.rowLayouts.entries()) {
+          expect(row.weeks).toBeGreaterThanOrEqual(5);
+          expect(row.weeks).toBeLessThanOrEqual(6);
+          if (index > 0) {
+            const previous = layout.rowLayouts[index - 1];
+
+            expect(row.top - previous.top - previous.height).toBeCloseTo(layout.rowGap);
+          }
+        }
+        expect(composition.eventsTop + composition.eventsHeight).toBeLessThanOrEqual(
+          LOCK_SCREEN_CONTENT_BANDS[lockScreenProfile].bottom,
+        );
+      }
+    }
+  });
+
+  it('uses spare vertical room before choosing dense two-column events', () => {
+    const publicEvents = Array.from({ length: 7 }, (_, index) => ({
+      name: `Milestone ${index}`,
+      date: '2026-12-25',
+    }));
+    const quarter = buildWallpaperModel({
+      date,
+      timeRange: 'quarter',
+      eventCount: 3,
+      publicEvents,
+    });
+    const crowdedQuarter = buildWallpaperModel({
+      date,
+      timeRange: 'quarter',
+      eventCount: 5,
+      publicEvents,
+      lockScreenProfile: 'large-clock',
+    });
+    const crowdedYear = buildWallpaperModel({
+      date,
+      timeRange: 'year',
+      eventCount: 5,
+      publicEvents,
+      lockScreenProfile: 'large-clock',
+    });
+
+    expect(getWallpaperEventLayout(quarter)).toMatchObject({
+      limit: 3,
+      columns: 1,
+      rowHeight: 76,
+      rowGap: 20,
+      slotHeight: 300,
+    });
+    expect(getWallpaperEventLayout(crowdedQuarter)).toMatchObject({
+      limit: 5,
+      columns: 1,
+      rowHeight: 68,
+      rowGap: 14,
+      slotHeight: 428,
+    });
+    expect(getWallpaperEventLayout(crowdedYear)).toMatchObject({
+      limit: 5,
+      columns: 2,
+      rowHeight: 52,
+      rowGap: 6,
+      slotHeight: 204,
+    });
+    expect(getCalendarComposition(quarter)?.eventsTop).toBe(1680);
+    expect(getCalendarComposition(crowdedQuarter)?.eventsTop).toBe(1652);
+  });
+
   it('anchors every calendar range below the clock and positions events independently', () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
       for (const timeRange of TIME_RANGES) {
@@ -93,10 +187,10 @@ describe('grouped calendar composition', () => {
     }
   });
 
-  it('uses calendar composition only for calendar and hybrid presentations', () => {
+  it('uses calendar composition for Calendar, Hybrid and Progress presentations', () => {
     for (const timeRange of TIME_RANGES) {
       for (const presentation of PRESENTATIONS) {
-        if (['calendar', 'hybrid'].includes(presentation)) {
+        if (['calendar', 'hybrid', 'progress'].includes(presentation)) {
           continue;
         }
 
@@ -123,11 +217,9 @@ describe('grouped calendar composition', () => {
             getCalendarRequiredHeight(model, presentation === 'hybrid'),
           ).toBeLessThanOrEqual(bounds.calendarBottom! - bounds.calendarTop!);
 
-          if (presentation !== 'progress') {
-            expect(layout.slotHeight).toBe(204);
-            expect(bounds.eventsBottom).toBeLessThanOrEqual(band.bottom);
-            expect(bounds.eventsTop! - bounds.calendarBottom!).toBe(24);
-          }
+          expect(layout.slotHeight).toBe(204);
+          expect(bounds.eventsBottom).toBeLessThanOrEqual(band.bottom);
+          expect(bounds.eventsTop! - bounds.calendarBottom!).toBe(24);
         }
       }
     }

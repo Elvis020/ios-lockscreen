@@ -6,6 +6,8 @@ import {
 } from './periodCalculator';
 import {
   resolveTheme,
+  DEFAULT_EVENT_COUNT,
+  isEventCount,
   type LockScreenProfile,
   type Presentation,
   type TimeRange,
@@ -47,6 +49,7 @@ export interface WallpaperModel {
   timeRange: TimeRange;
   presentation: Presentation;
   lockScreenProfile: LockScreenProfile;
+  eventCount: number;
   cells: WallpaperCell[];
   monthGroups: WallpaperMonthGroup[];
   events: DisplayEvent[];
@@ -58,6 +61,7 @@ export function buildWallpaperModel(options: {
   timeRange?: TimeRange;
   presentation?: Presentation;
   lockScreenProfile?: LockScreenProfile;
+  eventCount?: number;
   themeId?: string;
   timeZone?: string;
   publicEvents?: Array<{ name: string; date: string }>;
@@ -131,6 +135,9 @@ export function buildWallpaperModel(options: {
     timeRange,
     presentation,
     lockScreenProfile,
+    eventCount: isEventCount(user?.eventCount ?? options.eventCount)
+      ? (user?.eventCount ?? options.eventCount)!
+      : DEFAULT_EVENT_COUNT,
     cells,
     monthGroups: buildMonthGroups(effectivePeriod, currentDate, eventDates),
     events,

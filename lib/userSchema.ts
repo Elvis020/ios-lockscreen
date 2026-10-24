@@ -1,5 +1,7 @@
 import {
   BUILT_IN_THEMES,
+  DEFAULT_EVENT_COUNT,
+  isEventCount,
   isLockScreenProfile,
   isPresentation,
   isTimeRange,
@@ -50,6 +52,7 @@ export interface UserData {
   timeRange: TimeRange;
   presentation: Presentation;
   lockScreenProfile: LockScreenProfile;
+  eventCount?: number;
   timeZone: string;
   customThemes: WallpaperTheme[];
   events: ManualEvent[];
@@ -84,6 +87,7 @@ export function normalizeUserData(raw: unknown, token: string): UserData | null 
     theme,
     timeRange: normalizeTimeRange(record),
     presentation: isPresentation(record.presentation) ? record.presentation : 'calendar',
+    eventCount: isEventCount(record.eventCount) ? record.eventCount : DEFAULT_EVENT_COUNT,
     lockScreenProfile: isLockScreenProfile(record.lockScreenProfile)
       ? record.lockScreenProfile
       : 'standard',

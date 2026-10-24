@@ -3,7 +3,12 @@ import {
   buildNativeWallpaperScene,
   NativeSceneBudgetError,
 } from '../lib/nativeWallpaperScene';
-import { LOCK_SCREEN_PROFILES, PRESENTATIONS, TIME_RANGES } from '../lib/preferences';
+import {
+  EVENT_COUNTS,
+  LOCK_SCREEN_PROFILES,
+  PRESENTATIONS,
+  TIME_RANGES,
+} from '../lib/preferences';
 import {
   CALENDAR_DOT_GEOMETRY,
   getCalendarComposition,
@@ -25,73 +30,119 @@ const publicEvents = [
 ];
 
 describe('native wallpaper scene', () => {
-  it('builds all sixty range, presentation and profile combinations inside the clock-safe band', () => {
-    for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
-      for (const timeRange of TIME_RANGES) {
-        for (const presentation of PRESENTATIONS) {
-          const model = buildWallpaperModel({
-            date,
-            timeRange,
-            presentation,
-            lockScreenProfile,
-            publicEvents,
-          });
-          const scene = buildNativeWallpaperScene(model);
-          const bounds = getWallpaperLayoutBounds(model);
-          const text = scene.commands.filter((command) => command.kind === 'text');
+  it.each(EVENT_COUNTS)(
+    'honors event count %i across every layout inside the clock-safe band',
+    (eventCount) => {
+      for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+        for (const timeRange of TIME_RANGES) {
+          for (const presentation of PRESENTATIONS) {
+            const model = buildWallpaperModel({
+              date,
+              timeRange,
+              presentation,
+              lockScreenProfile,
+              eventCount,
+              publicEvents: [
+                ...publicEvents,
+                ...Array.from({ length: 4 }, (_, index) => ({
+                  name: `Extra milestone ${index}`,
+                  date: '2026-12-25',
+                })),
+              ],
+            });
+            const scene = buildNativeWallpaperScene(model);
+            const bounds = getWallpaperLayoutBounds(model);
+            const text = scene.commands.filter((command) => command.kind === 'text');
 
-          expect(scene).toMatchObject({
-            version: 1,
-            width: WALLPAPER_WIDTH,
-            height: WALLPAPER_HEIGHT,
-          });
-          expect(scene.commands.length).toBeLessThan(600);
-          const visible = model.events.slice(0, getWallpaperEventLayout(model).limit);
+            expect(scene).toMatchObject({
+              version: 1,
+              width: WALLPAPER_WIDTH,
+              height: WALLPAPER_HEIGHT,
+            });
+            expect(scene.commands.length).toBeLessThan(600);
+            const visible = model.events.slice(0, getWallpaperEventLayout(model).limit);
 
-          for (const event of visible) {
-            expect(text.map(({ value }) => value)).toContain(event.name);
-          }
-
-          for (const command of scene.commands) {
-            const width = command.kind === 'circle' ? command.diameter : command.width;
-            const height = command.kind === 'circle' ? command.diameter : command.height;
-
-            expect([command.x, command.y, width, height].every(Number.isFinite)).toBe(
-              true,
-            );
-            expect(command.x).toBeGreaterThanOrEqual(0);
-            expect(command.x + width).toBeLessThanOrEqual(scene.width);
-            expect(command.y).toBeGreaterThanOrEqual(bounds.contentTop);
-            expect(command.y + height).toBeLessThanOrEqual(bounds.contentBottom);
-
-            if (command.kind === 'circle') {
-              expect(
-                [command.x, command.y, command.diameter].every(Number.isInteger),
-              ).toBe(true);
-              expect(command.y).toBeGreaterThanOrEqual(bounds.calendarTop as number);
-              expect(command.y + height).toBeLessThanOrEqual(
-                bounds.calendarBottom as number,
-              );
+            for (const event of visible) {
+              expect(text.map(({ value }) => value)).toContain(event.name);
             }
+            expect(visible).toHaveLength(eventCount);
+            expect(text.map(({ value }) => value)).toContain(`+${7 - eventCount} more`);
+            for (const event of model.events.slice(eventCount)) {
+              expect(text.map(({ value }) => value)).not.toContain(event.name);
+            }
+
+            for (const command of scene.commands) {
+              const width = command.kind === 'circle' ? command.diameter : command.width;
+              const height =
+                command.kind === 'circle' ? command.diameter : command.height;
+
+              expect([command.x, command.y, width, height].every(Number.isFinite)).toBe(
+                true,
+              );
+              expect(command.x).toBeGreaterThanOrEqual(0);
+              expect(command.x + width).toBeLessThanOrEqual(scene.width);
+              expect(command.y).toBeGreaterThanOrEqual(bounds.contentTop);
+              expect(command.y + height).toBeLessThanOrEqual(bounds.contentBottom);
+
+              if (command.kind === 'circle') {
+                expect(
+                  [command.x, command.y, command.diameter].every(Number.isInteger),
+                ).toBe(true);
+                expect(command.y).toBeGreaterThanOrEqual(bounds.calendarTop as number);
+                expect(command.y + height).toBeLessThanOrEqual(
+                  bounds.calendarBottom as number,
+                );
+              }
+            }
+
+            const timers = scene.commands.filter(
+              (command) => command.kind === 'roundRect' && command.height === 3,
+            );
+
+            expect(timers).toHaveLength(
+              (visible.length - (presentation === 'countdown' ? 1 : 0)) * 2,
+            );
+            expect(
+              timers.every(
+                (command) =>
+                  command.kind === 'roundRect' &&
+                  command.height === 3 &&
+                  command.radius === 1.5,
+              ),
+            ).toBe(true);
           }
-
-          const timers = scene.commands.filter(
-            (command) => command.kind === 'roundRect' && command.height === 3,
-          );
-
-          expect(timers).toHaveLength(
-            presentation === 'countdown' ? 0 : visible.length * 2,
-          );
-          expect(
-            timers.every(
-              (command) =>
-                command.kind === 'roundRect' &&
-                command.height === 3 &&
-                command.radius === 1.5,
-            ),
-          ).toBe(true);
         }
       }
+    },
+  );
+
+  it('renders saved Year/progress exactly like the compact Year calendar', () => {
+    for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+      const options = {
+        date,
+        timeRange: 'year' as const,
+        lockScreenProfile,
+        publicEvents,
+      };
+      const calendar = buildNativeWallpaperScene(buildWallpaperModel(options));
+      const legacy = buildNativeWallpaperScene(
+        buildWallpaperModel({ ...options, presentation: 'progress' }),
+      );
+
+      expect(legacy).toEqual(calendar);
+      expect(
+        calendar.commands.some(
+          (command) => command.kind === 'text' && command.value === '2026',
+        ),
+      ).toBe(false);
+      expect(
+        calendar.commands.some(
+          (command) => command.kind === 'roundRect' && command.height > 3,
+        ),
+      ).toBe(false);
+      expect(calendar.commands).toContainEqual(
+        expect.objectContaining({ kind: 'text', value: 'Réunion 🎉' }),
+      );
     }
   });
 
@@ -287,8 +338,8 @@ describe('native wallpaper scene', () => {
 
       expect(dots).toHaveLength(days);
       expect(monthLabels).toHaveLength(12);
-      expect(new Set(monthLabels.map(({ x }) => x)).size).toBe(4);
-      expect(new Set(monthLabels.map(({ y }) => y)).size).toBe(3);
+      expect(new Set(monthLabels.map(({ x }) => x)).size).toBe(3);
+      expect(new Set(monthLabels.map(({ y }) => y)).size).toBe(4);
       expect(
         scene.commands.filter(
           (command) => command.kind === 'circle' && command.diameter === 24,
@@ -340,14 +391,10 @@ describe('native wallpaper scene', () => {
           scene.commands.filter(
             (command) => command.kind === 'roundRect' && command.height === 3,
           ),
-        ).toHaveLength(presentation === 'countdown' ? 0 : visible * 2);
+        ).toHaveLength((visible - (presentation === 'countdown' ? 1 : 0)) * 2);
         expect(values.join(' ')).not.toMatch(/2026-10-\d{2}|Oct \d/);
 
-        if (['calendar', 'hybrid', 'agenda'].includes(presentation)) {
-          expect(values).toContain(`+${7 - visible} more`);
-        } else {
-          expect(values.some((value) => /^\+\d/.test(value))).toBe(false);
-        }
+        expect(values).toContain(`+${7 - visible} more`);
       }
     }
   });

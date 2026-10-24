@@ -2,6 +2,8 @@ import { getManagementToken } from '../lib/auth';
 import { apiErrorResponse, jsonResponse } from '../lib/http';
 import {
   findWallpaperPreset,
+  isEventCount,
+  EVENT_COUNTS,
   isLockScreenProfile,
   isPresentation,
   isTimeRange,
@@ -43,6 +45,7 @@ export default async function handler(req: Request) {
         timeRange: result.user.timeRange,
         presentation: result.user.presentation,
         lockScreenProfile: result.user.lockScreenProfile,
+        eventCount: result.user.eventCount,
         preset: findWallpaperPreset(result.user.timeRange, result.user.presentation),
         viewMode: result.user.timeRange,
         timeZone: result.user.timeZone,
@@ -52,6 +55,7 @@ export default async function handler(req: Request) {
           timeRanges: TIME_RANGES,
           presentations: PRESENTATIONS,
           lockScreenProfiles: LOCK_SCREEN_PROFILES,
+          eventCounts: EVENT_COUNTS,
           presets: WALLPAPER_PRESET_IDS.map((id) => WALLPAPER_PRESETS[id]),
         },
         wallpaperKey: result.wallpaperKey,
@@ -74,6 +78,7 @@ export default async function handler(req: Request) {
         presentation?: Presentation;
         lockScreenProfile?: LockScreenProfile;
         timeZone?: string;
+        eventCount?: number;
       } = {};
 
       if (body.preset !== undefined) {
@@ -135,6 +140,17 @@ export default async function handler(req: Request) {
         preferences.timeZone = body.timeZone;
       }
 
+      if (body.eventCount !== undefined) {
+        if (!isEventCount(body.eventCount)) {
+          return jsonResponse(
+            { error: 'Event count must be a whole number from 1 to 5' },
+            400,
+          );
+        }
+
+        preferences.eventCount = body.eventCount;
+      }
+
       const user = await updatePreferences(token, preferences);
 
       return jsonResponse({
@@ -142,6 +158,7 @@ export default async function handler(req: Request) {
         timeRange: user?.timeRange,
         presentation: user?.presentation,
         lockScreenProfile: user?.lockScreenProfile,
+        eventCount: user?.eventCount,
         preset: user ? findWallpaperPreset(user.timeRange, user.presentation) : null,
         viewMode: user?.timeRange,
         timeZone: user?.timeZone,

@@ -40,14 +40,37 @@ describe('Telegram commands', () => {
     expect(help).toContain('<b>Events</b>');
     expect(help).toContain('<b>Appearance</b>');
     expect(help).toContain('<b>Calendar</b>');
-    expect(help).toContain('/view week|month|quarter|agenda|rolling14');
+    expect(help).toContain('/view week|month|quarter|rolling14');
     expect(help).toContain('/range week|month|quarter|rolling14|year');
-    expect(help).toContain('/layout calendar|agenda|countdown|progress|hybrid|minimal');
+    expect(help).toContain('/layout calendar|countdown|progress|hybrid');
     expect(help).toContain('/profile standard|large-clock');
     expect(help).toContain('/timezone Area/City');
     expect(help).toContain('/theme custom add');
     expect(help).toContain('/sync');
   });
+
+  it.each(['agenda', 'minimal'])(
+    'does not offer or select retired %s views',
+    async (retired) => {
+      await seedLinkedUser();
+      const { handleLinkedTelegramCommand } = await import('../lib/telegramBot');
+      const { getUser } = await import('../lib/tokenManager');
+      const before = await getUser('owner');
+
+      for (const command of ['/view', '/layout']) {
+        const reply = await handleLinkedTelegramCommand(
+          'owner',
+          command,
+          [retired],
+          'https://example.com',
+        );
+
+        expect(reply).toContain(command);
+        expect(reply).not.toContain(`|${retired}`);
+        expect(await getUser('owner')).toEqual(before);
+      }
+    },
+  );
 
   it('sends HTML and inline keyboard options in the Telegram delivery payload', async () => {
     const { sendTelegramMessage } = await import('../lib/telegramBot');
@@ -185,6 +208,8 @@ describe('Telegram commands', () => {
     const { processTelegramUpdate } = await import('../lib/telegramBot');
     const { getUser } = await import('../lib/tokenManager');
 
+    await processTelegramUpdate(telegramUpdate('/eventcount 5'), 'https://example.com');
+
     await processTelegramUpdate(telegramUpdate('/view hybrid'), 'https://example.com');
     await processTelegramUpdate(telegramUpdate('/range year'), 'https://example.com');
     await processTelegramUpdate(
@@ -200,10 +225,30 @@ describe('Telegram commands', () => {
       timeRange: 'year',
       presentation: 'progress',
       lockScreenProfile: 'large-clock',
+      eventCount: 5,
     });
-    expect(deliveryBody(0).text).toContain('Preset updated');
-    expect(deliveryBody(3).text).toContain('Preview it on your phone');
+    expect(deliveryBody(0).text).toContain('Event count updated');
+    expect(deliveryBody(1).text).toContain('Preset updated');
+    expect(deliveryBody(4).text).toContain('Preview it on your phone');
   });
+
+  it.each(['', '0', '6', '-1', '2.5', '3junk', '3 4', '03'])(
+    'rejects invalid event counts (%s) without mutating settings',
+    async (argument) => {
+      await seedLinkedUser();
+      const { processTelegramUpdate } = await import('../lib/telegramBot');
+      const { getUser } = await import('../lib/tokenManager');
+      const before = await getUser('owner');
+
+      await processTelegramUpdate(
+        telegramUpdate(`/eventcount ${argument}`),
+        'https://example.com',
+      );
+
+      expect(deliveryBody(0).text).toContain('/eventcount 1|2|3|4|5');
+      expect(await getUser('owner')).toEqual(before);
+    },
+  );
 
   it('keeps a completed custom theme deletion idempotent on replay', async () => {
     await seedLinkedUser({

@@ -55,10 +55,11 @@ Typing `/` in the bot chat will then show autocomplete for:
 /url
 /add YYYY-MM-DD Event name
 /events
+/eventcount 1|2|3|4|5
 /delete NUMBER
-/view week|month|quarter|agenda|rolling14|countdown|year|hybrid|minimal
+/view week|month|quarter|rolling14|countdown|year|hybrid
 /range week|month|quarter|rolling14|year
-/layout calendar|agenda|countdown|progress|hybrid|minimal
+/layout calendar|countdown|progress|hybrid
 /profile standard|large-clock
 /timezone Area/City
 /theme list
@@ -75,7 +76,21 @@ scan.
 `/url` deliberately returns the full wallpaper URL as plain, copyable text. Use this
 version when configuring the iOS Shortcut or anywhere else that needs the raw URL.
 
-`/view` applies one of the nine shared presets. `/range` and `/layout` then let you change those dimensions independently; every range and layout combination is supported. `/profile` calibrates the vertical content band. `large-clock` reserves more room above while keeping content above the notification region. Preview the result on the target phone because iOS lock-screen spacing and crop/zoom behavior vary.
+`/view` applies one of the seven shared presets. `/range` and `/layout` then let you change those dimensions independently. `/profile` calibrates the vertical content band. `large-clock` reserves more room above while keeping content above the notification region. Preview the result on the target phone because iOS lock-screen spacing and crop/zoom behavior vary.
+
+`/eventcount 3` shows up to three upcoming events. Choose 1–5; the default is 2.
+The count is saved separately from the view, so changing presets, ranges, layouts,
+themes or clock profiles does not reset it. The dashboard's **Events shown** setting
+edits the same preference. Remaining events appear as `+N more`; all tracked events
+still mark the calendar. Changes appear on the next wallpaper refresh.
+
+Agenda and Minimal views have been removed. Saved accounts using either fall back
+to Calendar without losing events or their wallpaper URL. The Minimal color theme
+is still available. Year uses a compact three-column calendar with event timers;
+older saved Year/progress settings render the same way.
+
+Run `npm run telegram:configure-commands` again after deploying this update to add
+`/eventcount` to Telegram's autocomplete menu. This does not alter the webhook.
 
 `/start` is intentionally omitted from autocomplete because it is only used by the dashboard's single-use account-link URL.
 

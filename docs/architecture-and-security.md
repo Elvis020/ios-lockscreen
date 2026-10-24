@@ -23,7 +23,12 @@ The application cannot force iOS to refresh a wallpaper. Run the Shortcut manual
 
 Existing user records preserve their stored week, month, or quarter and normalize to the calendar presentation with the standard lock-screen profile. New accounts start with the month-and-next-events hybrid preset. A read-only wallpaper key is created when a legacy account next uses a management API; existing Redis keys are not renamed.
 
-The schema stores `timeRange`, `presentation`, and `lockScreenProfile` separately. The nine named presets are shared mappings over those dimensions, so users may start from a preset and still tune range or presentation independently. Legacy `viewMode` settings and `/view` clients remain accepted at the API boundary.
+The schema stores `timeRange`, `presentation`, `lockScreenProfile`, and `eventCount`
+separately. The seven named presets map range/presentation only, so choosing a
+preset never resets the event count. Counts are integers 1–5, defaulting to 2 for
+new, legacy or invalid stored settings. Agenda and Minimal are no longer public
+views; saved versions normalize to Calendar without changing account keys or
+events. Minimal remains a color theme. Legacy `viewMode` remains accepted.
 
 Per-user mutations use short-lived owner locks with atomic commit-time lease fencing. An expired lock holder therefore cannot overwrite a newer update from the dashboard, Telegram, or Google Calendar.
 
@@ -52,29 +57,28 @@ view has no quarter/year heading; its full month names identify the grid. Quarte
 calendar and hybrid views show a centered, date-driven summary such as
 `26% complete · 68 days left`, without an overview timer bar. Other presentations use
 a modest single-line heading without a progress/date subtitle. Week, month, and
-quarter grids retain weekday labels; the denser year grid omits them. The native iOS
+quarter grids retain weekday labels; the denser year grid omits them. Year uses
+the same centered caption and event block as Quarter, without a year title or
+overview bar. Progress uses the compact summary header so events fit in every
+range. The native iOS
 clock is not part of the generated wallpaper.
 
 Event dates remain stored for sorting, countdowns, and calendar markers but are not
 printed beside events. Each displayed event has a single name/countdown line and a
 thin, three-pixel progress track on the full-resolution image. Compact rows use
 `Today`, `1d`, or `22d`; long names truncate without displacing the countdown. The
-minimal presentation retains the event row's track; the large countdown display
-has no event timer line.
+large countdown display has no event timer line; additional Countdown events do.
 
-| Presentation         | Standard clock | Large clock   |
-| -------------------- | -------------- | ------------- |
-| Calendar, any range  | 2 events       | 2 events      |
-| Hybrid               | 2 events       | 2 events      |
-| Agenda               | 5 events       | 4 events      |
-| Countdown or minimal | 1 event        | 1 event       |
-| Progress             | No event list  | No event list |
-
-These are display caps, not account limits. Calendar, hybrid, and agenda lists show
-`+N more` for remaining eligible events. Calendar markers use all eligible events,
-including those outside the displayed event rows. Agenda includes only upcoming
-events within its selected date range; other presentations retain globally upcoming
-events.
+Every active presentation honors the same saved display count: 1–5 events, default
+2, for either clock profile. One or two list events retain the existing 204px rail.
+Larger lists use full-width rows when the available band allows, first tightening
+76px rows/20px gaps to 68px rows/14px gaps if needed. Dense combinations then use
+two columns with 52px rows, a 28px gutter and the same thin timers. This preserves
+dot sizes instead of shrinking the calendar to fit the count. Countdown keeps its first event
+as the hero and lists the remainder beneath it. `+N more` counts all remaining
+upcoming events. This is a display limit, not an account limit; every eligible
+event still contributes its calendar marker. Dates remain stored and all active
+views retain globally upcoming events.
 
 The line measures inclusive progress from the displayed period's start to the event,
 matching the original timer. It reaches 100% on the event date and works for events
@@ -94,17 +98,18 @@ still private data. Native responses and errors always disable browser/CDN cachi
 
 Only the existing read-only wallpaper key is accepted for personalized native data;
 legacy management-token wallpaper URLs continue to work for PNG only. Supported
-native combinations cover all five ranges, six presentations and two clock profiles.
-Year uses a 4×3 month collection, and rolling 14 days uses two rows of seven dots.
+native combinations cover all five ranges, four presentations and two clock profiles.
+Year uses three columns and four compact rows of months; rolling 14 days uses two rows of seven dots.
 The existing scene-v1 adapter remains compatible. Oversized public marker scenes
 return a private, non-cacheable 422 rather than dropping markers. Unknown `format`
 values retain the existing PNG behavior for compatibility.
 
 Both renderers use shared geometry and event-cap calculations in `wallpaperLayout.ts`.
-Calendar/Hybrid content is top-anchored below the clock; compact event slots have
+Calendar/Hybrid/Progress content is top-anchored below the clock; compact event slots have
 independent preferred positions (1680px standard, 1772px large-clock) and move down
-only when a grid needs more clearance. Quarter cells can expand vertically to use
-the available band, and multi-row month collections distribute space between rows.
+when a grid needs more clearance or move up to fit a taller event list. Quarter cells can expand vertically to use
+the available band. Year trims empty trailing weeks and uses a fixed small gap
+between each quarter row instead of stretching month blocks apart.
 The native scene is interpreted on the iPhone by a strict, network-free Scriptable
 script using the native Font APIs. The script returns PNG bytes as base64 text to
 Shortcuts without saving files or uploading font data. The original PNG pathway and

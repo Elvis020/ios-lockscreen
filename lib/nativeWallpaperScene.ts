@@ -3,6 +3,7 @@ import {
   CONTENT_LEFT,
   CONTENT_RIGHT,
   getCalendarComposition,
+  getCountdownComposition,
   getDayRowsLayout,
   getMonthCollectionLayout,
   getWallpaperEventLayout,
@@ -216,7 +217,7 @@ function addMonths(
   for (const [groupIndex, group] of model.monthGroups.entries()) {
     const row = Math.floor(groupIndex / collection.columns);
     const column = groupIndex % collection.columns;
-    const groupTop = top + row * (collection.groupHeight + collection.rowGap);
+    const groupTop = top + collection.rowLayouts[row].top;
     const left = CONTENT_LEFT + column * (groupWidth + groupGap) + geometry.paddingX;
     const width = groupWidth - geometry.paddingX * 2;
     const labelTop = groupTop + geometry.paddingY;
@@ -432,8 +433,9 @@ function addCountdown(
   }
 
   // The installed v1 adapter accepts fonts up to 80px; no script update is required.
-  const blockHeight = event.daysLeft === 0 ? 196 : 240;
-  const start = top + (bottom - top - blockHeight) / 2;
+  const composition = getCountdownComposition(model);
+  const blockHeight = composition.heroHeight;
+  const start = composition.top;
 
   addText(
     scene,
@@ -482,6 +484,10 @@ function addCountdown(
     'center',
     true,
   );
+
+  if (composition.eventsHeight > 0) {
+    addEvents(scene, model, composition.eventsTop);
+  }
 }
 
 function addMinimal(
@@ -518,19 +524,23 @@ function addEventRow(
   model: WallpaperModel,
   event: DisplayEvent,
   top: number,
+  left = CONTENT_LEFT,
+  width = CONTENT_WIDTH,
 ): void {
   const layout = getWallpaperEventLayout(model);
-  const nameSize = layout.compact ? 34 : 40;
+  const nameSize = layout.nameSize;
   const nameHeight = Math.ceil(nameSize * 1.2);
-  const countdownSize = layout.compact ? 30 : 32;
+  const countdownSize = layout.countdownSize;
   const countdownHeight = Math.ceil(countdownSize * 1.2);
-  const gap = layout.compact ? 12 : 18;
+  const gap = layout.timerGap;
+  const countdownWidth = layout.columns === 2 ? 80 : 140;
+  const nameGap = layout.columns === 2 ? 16 : 28;
   const textTop = top + (layout.rowHeight - (nameHeight + gap + 3)) / 2;
 
   addText(
     scene,
     event.name,
-    { x: CONTENT_LEFT, y: textTop, width: CONTENT_WIDTH - 168, height: nameHeight },
+    { x: left, y: textTop, width: width - countdownWidth - nameGap, height: nameHeight },
     model.theme.text,
     nameSize,
     'medium',
@@ -541,9 +551,9 @@ function addEventRow(
     scene,
     event.countdownLabel,
     {
-      x: CONTENT_LEFT + CONTENT_WIDTH - 140,
+      x: left + width - countdownWidth,
       y: textTop + (nameHeight - countdownHeight) / 2,
-      width: 140,
+      width: countdownWidth,
       height: countdownHeight,
     },
     event.daysLeft <= 1
@@ -557,9 +567,9 @@ function addEventRow(
   );
   const timer = {
     kind: 'roundRect' as const,
-    x: CONTENT_LEFT,
+    x: left,
     y: textTop + nameHeight + gap,
-    width: CONTENT_WIDTH,
+    width,
     height: 3,
     radius: 1.5,
     fill: model.theme.future,
@@ -570,7 +580,7 @@ function addEventRow(
   if (event.progressPercent > 0) {
     scene.commands.push({
       ...timer,
-      width: (CONTENT_WIDTH * event.progressPercent) / 100,
+      width: (width * event.progressPercent) / 100,
       fill: model.theme.current,
     });
   }
@@ -582,21 +592,24 @@ function addEvents(
   top: number,
 ): void {
   const layout = getWallpaperEventLayout(model);
-  const visible = model.events.slice(0, layout.limit);
+  const visible = model.events.slice(layout.startIndex, layout.limit);
 
-  if (!visible.length) {
+  if (!model.events.length) {
     addEmptyEvents(scene, model, top, layout.slotHeight, layout.compact);
 
     return;
   }
 
   for (const [index, event] of visible.entries()) {
-    const rowTop = top + index * (layout.rowHeight + layout.rowGap);
+    const rowTop =
+      top + Math.floor(index / layout.columns) * (layout.rowHeight + layout.rowGap);
+    const left =
+      CONTENT_LEFT + (index % layout.columns) * (layout.cellWidth + layout.columnGap);
 
-    addEventRow(scene, model, event, rowTop);
+    addEventRow(scene, model, event, rowTop, left, layout.cellWidth);
   }
 
-  const overflow = model.events.length - visible.length;
+  const overflow = layout.overflow;
 
   if (overflow > 0) {
     addText(
@@ -606,9 +619,9 @@ function addEvents(
         x: CONTENT_LEFT,
         y:
           top +
-          visible.length * layout.rowHeight +
-          (visible.length - 1) * layout.rowGap +
-          8,
+          layout.rows * layout.rowHeight +
+          Math.max(0, layout.rows - 1) * layout.rowGap +
+          Math.max(0, layout.overflowHeight - (layout.compact ? 24 : 29)),
         width: CONTENT_WIDTH,
         height: layout.compact ? 24 : 29,
       },

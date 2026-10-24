@@ -1,11 +1,13 @@
 import { syncGoogleEvents } from './calendar/service';
 import {
   BUILT_IN_THEMES,
+  isEventCount,
   isLockScreenProfile,
   isPresentation,
   isTimeRange,
   isWallpaperPreset,
   listAvailableThemeIds,
+  PRESENTATIONS,
   WALLPAPER_PRESET_IDS,
   WALLPAPER_PRESETS,
 } from './preferences';
@@ -308,6 +310,7 @@ async function runLinkedTelegramCommand(
             `Range: <b>${escapeTelegramHtml(result.user.timeRange)}</b>`,
             `Layout: <b>${escapeTelegramHtml(result.user.presentation)}</b>`,
             `Lock-screen fit: <b>${escapeTelegramHtml(result.user.lockScreenProfile)}</b>`,
+            `Events shown: <b>${result.user.eventCount}</b>`,
             `Theme: <b>${escapeTelegramHtml(result.user.theme)}</b>`,
             `Time zone: <b>${escapeTelegramHtml(result.user.timeZone)}</b>`,
             `Events: <b>${result.user.events.length} manual</b> · <b>${result.user.cachedCalEvents.length} Google cached</b>`,
@@ -440,6 +443,30 @@ async function runLinkedTelegramCommand(
     };
   }
 
+  if (command === '/eventcount') {
+    const count = Number(args[0]);
+
+    if (args.length !== 1 || !/^[1-5]$/.test(args[0]) || !isEventCount(count)) {
+      return {
+        reply: usageReply('Choose how many events to show', '/eventcount 1|2|3|4|5'),
+        completionCommitted: false,
+      };
+    }
+
+    await updatePreferences(token, { eventCount: count }, completion);
+
+    return {
+      reply: htmlReply(
+        [
+          '✓ <b>Event count updated</b>',
+          `Show up to <b>${count}</b> ${count === 1 ? 'event' : 'events'} in every view.`,
+          WALLPAPER_REFRESH_NOTE,
+        ].join('\n'),
+      ),
+      completionCommitted: Boolean(completion),
+    };
+  }
+
   if (command === '/range') {
     if (!isTimeRange(args[0])) {
       return {
@@ -468,10 +495,7 @@ async function runLinkedTelegramCommand(
   if (command === '/layout') {
     if (!isPresentation(args[0])) {
       return {
-        reply: usageReply(
-          'Choose a presentation',
-          '/layout calendar|agenda|countdown|progress|hybrid|minimal',
-        ),
+        reply: usageReply('Choose a presentation', `/layout ${PRESENTATIONS.join('|')}`),
         completionCommitted: false,
       };
     }
@@ -714,12 +738,13 @@ function helpText(): string {
     '<b>Events</b>',
     '<code>/add YYYY-MM-DD Event name</code>',
     '<code>/events</code>',
+    '<code>/eventcount 1|2|3|4|5</code>  Events shown (default 2)',
     '<code>/delete NUMBER</code>',
     '',
     '<b>Appearance</b>',
     `<code>/view ${WALLPAPER_PRESET_IDS.join('|')}</code>`,
     '<code>/range week|month|quarter|rolling14|year</code>',
-    '<code>/layout calendar|agenda|countdown|progress|hybrid|minimal</code>',
+    `<code>/layout ${PRESENTATIONS.join('|')}</code>`,
     '<code>/profile standard|large-clock</code>',
     '<code>/timezone Area/City</code>',
     '<code>/theme list</code>',

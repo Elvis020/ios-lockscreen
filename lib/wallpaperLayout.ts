@@ -1,4 +1,8 @@
-import { formatPeriodRemaining, type WallpaperModel } from './wallpaperModel';
+import {
+  formatPeriodRemaining,
+  type WallpaperModel,
+  type WallpaperMonthGroup,
+} from './wallpaperModel';
 
 export const WALLPAPER_WIDTH = 1284;
 export const WALLPAPER_HEIGHT = 2778;
@@ -41,6 +45,17 @@ export interface WallpaperEventLayout {
   slotHeight: number;
   sectionGap: number;
   lift: number;
+  columns: number;
+  columnGap: number;
+  cellWidth: number;
+  rows: number;
+  nameSize: number;
+  countdownSize: number;
+  timerGap: number;
+  startIndex: number;
+  visibleCount: number;
+  overflow: number;
+  contentHeight: number;
 }
 
 export interface CalendarComposition {
@@ -58,31 +73,36 @@ export interface CalendarComposition {
 export type MonthScale = 'large' | 'large-compact' | 'medium' | 'dots' | 'dots-compact';
 
 export function isGroupedCalendarLayout(model: WallpaperModel): boolean {
-  return ['calendar', 'hybrid'].includes(model.presentation);
+  return ['calendar', 'hybrid', 'progress'].includes(model.presentation);
 }
 
 export function getWallpaperEventLayout(model: WallpaperModel): WallpaperEventLayout {
-  const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
   const largeClock = model.lockScreenProfile === 'large-clock';
-  const compact = model.presentation === 'calendar' || model.presentation === 'hybrid';
-  const slotHeight = compact
-    ? 204
-    : band.bottom - band.top - HEADER_HEIGHT - HEADER_TO_PRESENTATION_GAP;
-  const rowHeight = compact ? 76 : 144;
-  const rowGap = compact ? 20 : 40;
-  const overflowHeight = compact ? 32 : 40;
-  const capacity = Math.max(
-    0,
-    Math.floor((slotHeight - overflowHeight + rowGap) / (rowHeight + rowGap)),
-  );
-  const limit =
-    model.presentation === 'progress'
-      ? 0
-      : model.presentation === 'countdown' || model.presentation === 'minimal'
-        ? 1
-        : compact
-          ? Math.min(2, capacity)
-          : capacity;
+  const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
+  const compact = model.presentation !== 'agenda' && model.presentation !== 'minimal';
+  const limit = model.eventCount;
+  const startIndex = model.presentation === 'countdown' ? 1 : 0;
+  const visibleCount = Math.max(0, Math.min(limit, model.events.length) - startIndex);
+  const overflow = Math.max(0, model.events.length - limit);
+  const listHeight = (height: number, gap: number) =>
+    visibleCount * height + Math.max(0, visibleCount - 1) * gap + (overflow ? 32 : 0);
+  const calendarTop = band.top + 72;
+  const availableHeight = isGroupedCalendarLayout(model)
+    ? band.bottom -
+      calendarTop -
+      getCalendarRequiredHeight(model, model.presentation === 'hybrid') -
+      24
+    : band.bottom - band.top - HEADER_HEIGHT - HEADER_TO_PRESENTATION_GAP - 240 - 28;
+  const snug = compact && visibleCount > 2 && listHeight(76, 20) > availableHeight;
+  const dense = snug && listHeight(68, 14) > availableHeight;
+  const columns = dense ? 2 : 1;
+  const rowHeight = dense ? 52 : snug ? 68 : compact ? 76 : 144;
+  const rowGap = dense ? 6 : snug ? 14 : compact ? 20 : 40;
+  const overflowHeight = dense ? 26 : compact ? 32 : 40;
+  const rows = Math.ceil(visibleCount / columns);
+  const contentHeight =
+    rows * rowHeight + Math.max(0, rows - 1) * rowGap + (overflow ? overflowHeight : 0);
+  const columnGap = 28;
 
   return {
     limit,
@@ -90,9 +110,40 @@ export function getWallpaperEventLayout(model: WallpaperModel): WallpaperEventLa
     rowHeight,
     rowGap,
     overflowHeight,
-    slotHeight,
+    slotHeight: Math.max(204, contentHeight),
     sectionGap: largeClock && model.presentation === 'calendar' ? 16 : 24,
     lift: model.presentation === 'calendar' ? (largeClock ? 48 : 32) : 0,
+    columns,
+    columnGap,
+    cellWidth:
+      (WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT - (columns - 1) * columnGap) /
+      columns,
+    rows,
+    nameSize: dense ? 24 : compact ? 34 : 40,
+    countdownSize: dense ? 22 : compact ? 30 : 32,
+    timerGap: dense ? 6 : compact ? 12 : 18,
+    startIndex,
+    visibleCount,
+    overflow,
+    contentHeight,
+  };
+}
+
+export function getCountdownComposition(model: WallpaperModel) {
+  const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
+  const availableTop = band.top + HEADER_HEIGHT + HEADER_TO_PRESENTATION_GAP;
+  const layout = getWallpaperEventLayout(model);
+  const heroHeight = model.events[0]?.daysLeft === 0 ? 196 : 240;
+  const hasRail = layout.visibleCount > 0 || layout.overflow > 0;
+  const height = heroHeight + (hasRail ? 28 + layout.contentHeight : 0);
+  const top = availableTop + (band.bottom - availableTop - height) / 2;
+
+  return {
+    top,
+    height,
+    heroHeight,
+    eventsTop: top + heroHeight + 28,
+    eventsHeight: hasRail ? layout.contentHeight : 0,
   };
 }
 
@@ -114,14 +165,6 @@ export function getWallpaperLayoutBounds(model: WallpaperModel): WallpaperLayout
       calendarBottom: composition.calendarTop + composition.calendarHeight,
       eventsTop: composition.eventsTop,
       eventsBottom: composition.eventsTop + composition.eventsHeight,
-    };
-  }
-
-  if (model.presentation === 'progress') {
-    return {
-      ...bounds,
-      calendarTop: presentationTop + (model.timeRange === 'year' ? 144 : 162),
-      calendarBottom: band.bottom,
     };
   }
 
@@ -159,9 +202,12 @@ export function getCalendarComposition(
   const calendarTop = band.top + headerHeight + headerGap;
   const eventGap = 24;
   const preferredEventsTop = model.lockScreenProfile === 'large-clock' ? 1772 : 1680;
-  const eventsTop = Math.max(preferredEventsTop, calendarTop + requiredHeight + eventGap);
-  const calendarHeight = eventsTop - eventGap - calendarTop;
   const eventsHeight = getWallpaperEventLayout(model).slotHeight;
+  const eventsTop = Math.max(
+    Math.min(preferredEventsTop, band.bottom - eventsHeight),
+    calendarTop + requiredHeight + eventGap,
+  );
+  const calendarHeight = eventsTop - eventGap - calendarTop;
   const height = eventsTop + eventsHeight - band.top;
 
   return {
@@ -185,10 +231,20 @@ export function getWallpaperHeaderCopy(
     return { title: title || 'Next event' };
   }
 
+  if (!title && model.presentation === 'progress') {
+    return {
+      title: null,
+      subtitle:
+        model.period.kind === 'rolling'
+          ? '14-day outlook'
+          : `${model.period.percentComplete}% complete · ${formatPeriodRemaining(model.period.daysLeft)}`,
+    };
+  }
+
   if (
     !title &&
-    model.timeRange === 'quarter' &&
-    (model.presentation === 'calendar' || model.presentation === 'hybrid')
+    ['quarter', 'year'].includes(model.timeRange) &&
+    isGroupedCalendarLayout(model)
   ) {
     return {
       title: null,
@@ -217,7 +273,8 @@ export function getDayCardGeometry(compact: boolean) {
 
 export function getMonthCollectionGeometry(model: WallpaperModel) {
   const groupCount = model.monthGroups.length;
-  const columns = groupCount === 1 ? 1 : groupCount <= 3 ? 3 : 4;
+  const year = model.timeRange === 'year';
+  const columns = groupCount === 1 ? 1 : year || groupCount <= 3 ? 3 : 4;
   const scale: MonthScale =
     groupCount === 1
       ? model.lockScreenProfile === 'large-clock'
@@ -232,7 +289,12 @@ export function getMonthCollectionGeometry(model: WallpaperModel) {
   return {
     columns,
     rows: Math.ceil(groupCount / columns),
-    widthPercent: 100 / columns - (columns > 1 ? 2 : 0),
+    widthPercent: year
+      ? ((WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT - 24) /
+          3 /
+          (WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT)) *
+        100
+      : 100 / columns - (columns > 1 ? 2 : 0),
     scale,
   };
 }
@@ -292,36 +354,84 @@ export function getMonthCollectionLayout(
   availableHeight?: number,
 ) {
   const collection = getMonthCollectionGeometry(model);
+  const year = model.timeRange === 'year';
+  const largeClock = model.lockScreenProfile === 'large-clock';
   const roomy = isGroupedCalendarLayout(model);
-  const base = getMonthGeometry(collection.scale, roomy);
-  const baseGroupHeight = getMonthGroupHeight(
-    collection.scale,
-    model.monthGroups.length > 1,
-    roomy,
+  const base = {
+    ...getMonthGeometry(collection.scale, roomy),
+    ...(year
+      ? {
+          paddingY: 0,
+          paddingX: 6,
+          labelSize: largeClock ? 22 : 28,
+          labelGap: largeClock ? 2 : 4,
+        }
+      : {}),
+  };
+  const labelHeight =
+    model.monthGroups.length > 1 ? base.labelSize * 1.2 + base.labelGap : 0;
+  const metadataHeight =
+    base.paddingY * 2 +
+    labelHeight +
+    (base.showWeekdays ? base.weekdaySize * 1.2 + 7 : 0);
+  const rowWeeks = Array.from({ length: collection.rows }, (_, row) =>
+    year
+      ? Math.max(
+          ...model.monthGroups
+            .slice(row * collection.columns, (row + 1) * collection.columns)
+            .map(visibleMonthWeeks),
+        )
+      : 6,
   );
-  const minimumGap =
-    collection.scale === 'dots-compact' || model.presentation === 'hybrid' ? 10 : 14;
+  const minimumGap = year
+    ? largeClock
+      ? 6
+      : 10
+    : model.presentation === 'hybrid'
+      ? 10
+      : 14;
   const requiredHeight =
-    collection.rows * baseGroupHeight + Math.max(0, collection.rows - 1) * minimumGap;
+    rowWeeks.reduce((sum, weeks) => sum + metadataHeight + weeks * base.cellHeight, 0) +
+    Math.max(0, collection.rows - 1) * minimumGap;
   const height = Math.max(requiredHeight, availableHeight ?? requiredHeight);
   const extraCellSpace = Math.floor((height - requiredHeight) / (collection.rows * 6));
   const cellHeight =
     roomy && collection.scale === 'medium'
       ? Math.min(72, base.cellHeight + extraCellSpace)
       : base.cellHeight;
-  const groupHeight = baseGroupHeight + 6 * (cellHeight - base.cellHeight);
-  const rowGap =
-    collection.rows > 1
-      ? (height - collection.rows * groupHeight) / (collection.rows - 1)
+  const rowHeights = rowWeeks.map((weeks) => metadataHeight + weeks * cellHeight);
+  const rowGap = year
+    ? minimumGap
+    : collection.rows > 1
+      ? (height - rowHeights.reduce((sum, value) => sum + value, 0)) /
+        (collection.rows - 1)
       : 0;
+  let top = 0;
+  const rowLayouts = rowHeights.map((rowHeight, row) => {
+    const result = { top, height: rowHeight, weeks: rowWeeks[row] };
+
+    top += rowHeight + rowGap;
+
+    return result;
+  });
 
   return {
     ...collection,
     geometry: { ...base, cellHeight },
-    groupHeight,
+    rowLayouts,
     rowGap,
     requiredHeight,
   };
+}
+
+function visibleMonthWeeks(group: WallpaperMonthGroup): number {
+  let count = group.cells.length;
+
+  while (count > 0 && group.cells[count - 1] === null) {
+    count -= 1;
+  }
+
+  return Math.ceil(count / 7);
 }
 
 export function getDayRowsLayout(

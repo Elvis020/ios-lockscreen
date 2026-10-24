@@ -12,25 +12,31 @@ draws that scene on the iPhone using its native system font and returns a PNG to
 Shortcuts. Shortcuts still applies the wallpaper. No Apple font file is copied into
 the project, downloaded, or hosted on Vercel.
 
-The prototype supports all nine presets: Week, Month, Quarter, Agenda, Rolling 14
-days, Countdown, Year progress, Month + next events, and Minimal. It also supports
-all 60 combinations of the five ranges, six presentations and two clock profiles,
+The prototype supports seven presets: Week, Month, Quarter, Rolling 14 days,
+Countdown, Year, and Month + next events. It also supports
+all 40 combinations of the five ranges, four presentations and two clock profiles,
 including saved built-in/custom themes. The current Telegram/dashboard settings
 remain authoritative; a preset is not silently replaced by a different view.
 
-Calendar/Hybrid headings start at the top of the existing clock-safe band, with
+Calendar/Hybrid/Progress headings start at the top of the existing clock-safe band, with
 the grid directly below. Event rows have an independent preferred anchor, so
-moving the calendar up does not pull the events up with it. Dense grids may move
-the event block down only as far as needed to avoid overlap. Quarter dots remain
+moving the calendar up does not pull the default event block up with it. Dense
+grids can move events down to avoid overlap; larger lists move up when needed to
+remain above notifications. Quarter dots remain
 32px, weekdays remain clear, and event timer lines remain 3px thin. Compact lists
-show two events plus `+N more`; Agenda shows five events (four with the large clock),
-Minimal and Countdown show one, and Progress has no event list. Event dates and
+default to two events plus `+N more`. Set 1–5 using `/eventcount` or **Events shown**
+on the dashboard; this preference survives view changes. Rows stay full width
+while space allows, tightening their vertical gaps before using two columns for
+the densest combinations. Calendar dot sizes are preserved. Countdown counts its
+featured event as the first, with additional events beneath it. Event dates and
 the redundant quarter heading stay hidden.
 
 Month rows use a 100px pitch (90px with the large clock). Quarter rows spread from
-52px up to 72px when space permits, without enlarging the dots. Year uses a 4×3
-month collection; Rolling 14 days uses two rows of seven. Extra space between
-month blocks is distributed consistently by both renderers. Native dot and
+52px up to 72px when space permits, without enlarging the dots. Year uses three
+columns and four compact quarter rows, without spreading rows to fill the band.
+It has a centered progress caption and events, not a separate year heading or
+overview bar. Saved Year/progress settings render identically to Year/calendar.
+Rolling 14 days uses two rows of seven. Native dot and
 event-ring origins align to whole pixels, retaining normal circle antialiasing.
 
 These refinements change server-side drawing data only. The scene stays at version 1:
@@ -100,7 +106,7 @@ If Scriptable is terminated for memory or fails inside the extension, try its
 
 ## Verify on the iPhone
 
-Check all nine presets and both clock profiles. Confirm genuine system-font text,
+Check all seven presets, event counts 1–5, and both clock profiles. Confirm genuine system-font text,
 crisp dots, readable weekday labels, full month names, event-ring alignment and
 three-pixel event tracks. Test a long title, accented characters and emoji. Event
 names currently use conservative single-line truncation because DrawContext does
@@ -121,7 +127,7 @@ npm run check
 npm run preview:native-data -- /private/tmp/calendar-native-fixtures
 ```
 
-The second command writes 60 deterministic JSON scenes using synthetic events.
+The second command writes 40 deterministic JSON scenes using synthetic events.
 It does not render with iOS or prove the Scriptable/Shortcuts integration. Tests run
 the actual Scriptable script in a simulated native API environment; a native Mac
 preview is also only a visual aid, not an iPhone execution result.

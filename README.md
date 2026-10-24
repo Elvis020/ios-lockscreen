@@ -19,8 +19,9 @@ Calendar Lockscreen turns your calendar and upcoming events into a live wallpape
 ## ✨ What can it do?
 
 - Choose week, month, quarter, rolling 14-day, or annual time ranges.
-- Switch between calendar, agenda, countdown, progress, hybrid, and minimal presentations.
-- Start from nine composed presets and calibrate spacing for a standard or large clock.
+- Switch between calendar, countdown, progress, and hybrid presentations.
+- Start from seven presets and calibrate spacing for a standard or large clock.
+- Choose how many events appear in every view (default: 2).
 - Add, list, and delete events from Telegram.
 - Import selected Google Calendar events.
 - Change built-in themes or create your own.

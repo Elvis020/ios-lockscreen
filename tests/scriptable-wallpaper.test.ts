@@ -3,7 +3,12 @@ import { runInNewContext } from 'node:vm';
 import { describe, expect, it, vi } from 'vitest';
 import { buildNativeWallpaperScene } from '../lib/nativeWallpaperScene';
 import { buildWallpaperModel } from '../lib/wallpaperModel';
-import { LOCK_SCREEN_PROFILES, PRESENTATIONS, TIME_RANGES } from '../lib/preferences';
+import {
+  EVENT_COUNTS,
+  LOCK_SCREEN_PROFILES,
+  PRESENTATIONS,
+  TIME_RANGES,
+} from '../lib/preferences';
 
 const source = readFileSync(
   new URL('../scripts/scriptable/render-wallpaper.js', import.meta.url),
@@ -111,45 +116,53 @@ describe('Scriptable native wallpaper adapter (simulated runtime)', () => {
     },
   );
 
-  it('runs all sixty range/presentation/profile scenes through the installed adapter', () => {
-    for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
-      for (const timeRange of TIME_RANGES) {
-        for (const presentation of PRESENTATIONS) {
-          const data = buildNativeWallpaperScene(
-            buildWallpaperModel({
-              date: new Date('2026-10-24T12:00:00Z'),
-              timeRange,
-              presentation,
-              lockScreenProfile,
-              publicEvents: [{ name: 'Réunion 🎉', date: '2026-11-14' }],
-            }),
-          );
-          const harness = runtime(data);
-
-          harness.run();
-
-          expect(harness.output).toHaveBeenCalledOnce();
-
-          const empty = runtime(
-            buildNativeWallpaperScene(
+  it.each(EVENT_COUNTS)(
+    'runs all active scenes with event count %i through the unchanged adapter',
+    (eventCount) => {
+      for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+        for (const timeRange of TIME_RANGES) {
+          for (const presentation of PRESENTATIONS) {
+            const data = buildNativeWallpaperScene(
               buildWallpaperModel({
-                date: new Date('2028-01-01T12:00:00Z'),
+                date: new Date('2026-10-24T12:00:00Z'),
+                eventCount,
+                publicEvents: Array.from({ length: 7 }, (_, index) => ({
+                  name: `Adapter milestone ${index}`,
+                  date: '2026-11-14',
+                })),
                 timeRange,
                 presentation,
                 lockScreenProfile,
               }),
-            ),
-          );
+            );
+            const harness = runtime(data);
 
-          expect(
-            () => empty.run(),
-            `${timeRange}/${presentation}/${lockScreenProfile} empty`,
-          ).not.toThrow();
-          expect(empty.output).toHaveBeenCalledOnce();
+            harness.run();
+
+            expect(harness.output).toHaveBeenCalledOnce();
+
+            const empty = runtime(
+              buildNativeWallpaperScene(
+                buildWallpaperModel({
+                  date: new Date('2028-01-01T12:00:00Z'),
+                  eventCount,
+                  timeRange,
+                  presentation,
+                  lockScreenProfile,
+                }),
+              ),
+            );
+
+            expect(
+              () => empty.run(),
+              `${timeRange}/${presentation}/${lockScreenProfile} empty`,
+            ).not.toThrow();
+            expect(empty.output).toHaveBeenCalledOnce();
+          }
         }
       }
-    }
-  });
+    },
+  );
 
   it('accepts a one-percent progress fill at the start of a quarter', () => {
     const model = buildWallpaperModel({

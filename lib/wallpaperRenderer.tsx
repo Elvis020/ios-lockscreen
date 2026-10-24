@@ -5,6 +5,7 @@ import {
   CONTENT_LEFT,
   CONTENT_RIGHT,
   getCalendarComposition,
+  getCountdownComposition,
   getDayCardGeometry,
   getDayRowsLayout,
   getMonthCollectionLayout,
@@ -21,6 +22,7 @@ import {
   WEEKDAY_LABELS,
   type MonthScale,
   type CalendarComposition,
+  type WallpaperEventLayout,
 } from './wallpaperLayout';
 import {
   formatPeriodRemaining,
@@ -235,6 +237,7 @@ function Agenda({ model }: { model: WallpaperModel }): ReactElement {
 
 function Countdown({ model }: { model: WallpaperModel }): ReactElement {
   const event = model.events[0];
+  const composition = getCountdownComposition(model);
 
   if (!event) {
     return <EmptyEvents theme={model.theme} />;
@@ -252,40 +255,76 @@ function Countdown({ model }: { model: WallpaperModel }): ReactElement {
       <div
         style={{
           display: 'flex',
-          color: model.theme.current,
-          fontSize: event.daysLeft === 0 ? 94 : 182,
-          fontWeight: 700,
-          lineHeight: 0.95,
+          position: 'relative',
+          width: '100%',
+          height: composition.heroHeight,
+          flexShrink: 0,
         }}
       >
-        {event.daysLeft === 0 ? 'Today' : event.daysLeft}
-      </div>
-      {event.daysLeft > 0 ? (
         <div
           style={{
             display: 'flex',
-            marginTop: 10,
-            color: model.theme.subtext,
-            fontSize: 30,
+            position: 'absolute',
+            top: 0,
+            width: '100%',
+            height: 96,
+            justifyContent: 'center',
+            color: model.theme.current,
+            fontSize: 80,
+            fontWeight: 700,
+            lineHeight: 1.2,
           }}
         >
-          {event.daysLeft === 1 ? 'day away' : 'days away'}
+          {event.daysLeft === 0 ? 'Today' : event.daysLeft}
+        </div>
+        {event.daysLeft > 0 ? (
+          <div
+            style={{
+              display: 'flex',
+              position: 'absolute',
+              top: 106,
+              width: '100%',
+              height: 36,
+              justifyContent: 'center',
+              color: model.theme.subtext,
+              fontSize: 30,
+            }}
+          >
+            {event.daysLeft === 1 ? 'day away' : 'days away'}
+          </div>
+        ) : null}
+        <div
+          style={{
+            display: 'flex',
+            position: 'absolute',
+            bottom: 0,
+            width: '100%',
+            height: 58,
+            justifyContent: 'center',
+            overflow: 'hidden',
+            whiteSpace: 'nowrap',
+            textOverflow: 'ellipsis',
+            fontSize: 48,
+            fontWeight: 600,
+          }}
+        >
+          {event.name}
+        </div>
+      </div>
+      {composition.eventsHeight > 0 ? (
+        <div
+          style={{
+            display: 'flex',
+            width: '100%',
+            height: composition.eventsHeight,
+            marginTop: 28,
+            flexShrink: 0,
+            textAlign: 'left',
+          }}
+        >
+          <EventList model={model} />
         </div>
       ) : null}
-      <div
-        style={{
-          display: 'flex',
-          maxWidth: 920,
-          marginTop: 42,
-          overflow: 'hidden',
-          whiteSpace: 'nowrap',
-          textOverflow: 'ellipsis',
-          fontSize: 48,
-          fontWeight: 600,
-        }}
-      >
-        {event.name}
-      </div>
     </div>
   );
 }
@@ -485,7 +524,7 @@ function MonthCollection({
           style={{
             display: 'flex',
             width: '100%',
-            height: layout.groupHeight,
+            height: layout.rowLayouts[index].height,
             flexShrink: 0,
             justifyContent: layout.columns === 1 ? 'center' : 'space-between',
           }}
@@ -499,7 +538,8 @@ function MonthCollection({
               scale={layout.scale}
               showLabel={groupCount > 1}
               readable={isGroupedCalendarLayout(model)}
-              cellHeight={layout.geometry.cellHeight}
+              geometry={layout.geometry}
+              weeks={layout.rowLayouts[index].weeks}
             />
           ))}
         </div>
@@ -515,7 +555,8 @@ function MonthGroup({
   scale,
   showLabel,
   readable,
-  cellHeight,
+  geometry,
+  weeks,
 }: {
   group: WallpaperMonthGroup;
   theme: WallpaperTheme;
@@ -523,10 +564,10 @@ function MonthGroup({
   scale: MonthScale;
   showLabel: boolean;
   readable: boolean;
-  cellHeight: number;
+  geometry: ReturnType<typeof getMonthGeometry>;
+  weeks: number;
 }): ReactElement {
-  const rows = chunk(group.cells, 7);
-  const geometry = getMonthGeometry(scale, readable);
+  const rows = chunk(group.cells.slice(0, weeks * 7), 7);
 
   return (
     <div
@@ -578,7 +619,7 @@ function MonthGroup({
               key={cell?.date ?? `blank-${rowIndex}-${cellIndex}`}
               cell={cell}
               theme={theme}
-              height={cellHeight}
+              height={geometry.cellHeight}
               scale={scale}
             />
           ))}
@@ -678,25 +719,34 @@ function CalendarDot({
 
 function EventList({ model }: { model: WallpaperModel }): ReactElement {
   const layout = getWallpaperEventLayout(model);
-  const visible = model.events.slice(0, layout.limit);
-  const overflow = Math.max(0, model.events.length - visible.length);
+  const visible = model.events.slice(layout.startIndex, layout.limit);
+  const overflow = layout.overflow;
 
-  if (!visible.length) {
+  if (!model.events.length) {
     return <EmptyEvents theme={model.theme} compact={layout.compact} />;
   }
 
   return (
     <div style={columnStyle}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: layout.rowGap }}>
-        {visible.map((event) => (
-          <EventRow
-            key={event.id}
-            event={event}
-            theme={model.theme}
-            compact={layout.compact}
-            height={layout.rowHeight}
-            emphasizeCountdown={isGroupedCalendarLayout(model)}
-          />
+        {chunk(visible, layout.columns).map((row) => (
+          <div key={row[0].id} style={{ display: 'flex', gap: layout.columnGap }}>
+            {row.map((event) => (
+              <div
+                key={event.id}
+                style={{ display: 'flex', width: layout.cellWidth, flexShrink: 0 }}
+              >
+                <EventRow
+                  event={event}
+                  theme={model.theme}
+                  compact={layout.compact}
+                  height={layout.rowHeight}
+                  emphasizeCountdown={layout.compact}
+                  layout={layout}
+                />
+              </div>
+            ))}
+          </div>
         ))}
       </div>
       {overflow ? (
@@ -722,17 +772,20 @@ function EventRow({
   compact,
   height,
   emphasizeCountdown = false,
+  layout,
 }: {
   event: DisplayEvent;
   theme: WallpaperTheme;
   compact: boolean;
   height: number;
   emphasizeCountdown?: boolean;
+  layout?: WallpaperEventLayout;
 }): ReactElement {
   return (
     <div
       style={{
         height,
+        width: '100%',
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
@@ -744,7 +797,7 @@ function EventRow({
           display: 'flex',
           alignItems: 'baseline',
           justifyContent: 'space-between',
-          gap: 28,
+          gap: layout?.columns === 2 ? 16 : 28,
         }}
       >
         <div
@@ -755,7 +808,7 @@ function EventRow({
             overflow: 'hidden',
             whiteSpace: 'nowrap',
             textOverflow: 'ellipsis',
-            fontSize: compact ? 34 : 40,
+            fontSize: layout?.nameSize ?? (compact ? 34 : 40),
             lineHeight: 1.2,
             fontWeight: 500,
           }}
@@ -766,13 +819,16 @@ function EventRow({
           style={{
             display: 'flex',
             flexShrink: 0,
+            width: layout?.columns === 2 ? 80 : 140,
+            justifyContent: 'flex-end',
             color:
               event.daysLeft <= 1
                 ? theme.current
                 : emphasizeCountdown
                   ? theme.text
                   : theme.subtext,
-            fontSize: compact ? (emphasizeCountdown ? 30 : 28) : 32,
+            fontSize:
+              layout?.countdownSize ?? (compact ? (emphasizeCountdown ? 30 : 28) : 32),
             lineHeight: 1.2,
             fontWeight: 500,
           }}
@@ -780,7 +836,9 @@ function EventRow({
           {event.countdownLabel}
         </div>
       </div>
-      <div style={{ display: 'flex', marginTop: compact ? 12 : 18 }}>
+      <div
+        style={{ display: 'flex', marginTop: layout?.timerGap ?? (compact ? 12 : 18) }}
+      >
         <EventTimer event={event} theme={theme} />
       </div>
     </div>

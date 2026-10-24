@@ -179,14 +179,7 @@ describe('dashboard API', () => {
       lockScreenProfile: 'large-clock',
       wallpaperOptions: {
         timeRanges: ['week', 'month', 'quarter', 'rolling14', 'year'],
-        presentations: [
-          'calendar',
-          'agenda',
-          'countdown',
-          'progress',
-          'hybrid',
-          'minimal',
-        ],
+        presentations: ['calendar', 'countdown', 'progress', 'hybrid'],
         lockScreenProfiles: ['standard', 'large-clock'],
         presets: Object.values(WALLPAPER_PRESETS),
       },
@@ -195,21 +188,24 @@ describe('dashboard API', () => {
     elements.get('theme')!.value = 'default';
     elements.get('timeZone')!.value = 'Africa/Accra';
     controls.applyPresetSelection();
+    elements.get('eventCount')!.value = '5';
     await controls.saveSettings();
 
     expect(savedBody).toEqual({
       timeRange: 'month',
       presentation: 'hybrid',
       lockScreenProfile: 'large-clock',
+      eventCount: 5,
       theme: 'default',
       timeZone: 'Africa/Accra',
     });
 
     elements.get('timeRange')!.value = 'year';
-    elements.get('presentation')!.value = 'agenda';
+    elements.get('presentation')!.value = 'hybrid';
     controls.syncPresetSelection();
 
     expect(elements.get('wallpaperPreset')!.value).toBe('custom');
+    expect(elements.get('eventCount')!.value).toBe('5');
   });
 
   it('renders a linked Telegram account during the initial dashboard load', async () => {
@@ -245,6 +241,7 @@ describe('dashboard API', () => {
     expect(elements.get('timeRange')?.value).toBe('month');
     expect(elements.get('presentation')?.value).toBe('hybrid');
     expect(elements.get('lockScreenProfile')?.value).toBe('large-clock');
+    expect(elements.get('eventCount')?.value).toBe('2');
   });
 
   it('discards an initial dashboard response after switching accounts', async () => {

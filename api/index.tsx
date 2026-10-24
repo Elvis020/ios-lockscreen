@@ -346,6 +346,11 @@ export default function handler() {
             <p class="setting-help">Lock screens vary. Preview on your phone; Large clock reserves more space above without moving into notifications.</p>
           </div>
           <div style="margin-top: 16px;">
+            <h3><label for="eventCount">Events shown</label></h3>
+            <select id="eventCount" aria-describedby="eventCountHelp"></select>
+            <p id="eventCountHelp" class="setting-help">Up to this many upcoming events in every view. Default: 2.</p>
+          </div>
+          <div style="margin-top: 16px;">
             <h3>Theme</h3>
             <select id="theme"></select>
           </div>
@@ -577,7 +582,7 @@ export default function handler() {
     function renderWallpaperOptions(settings) {
       const options = settings.wallpaperOptions || {
         timeRanges: ['week', 'month', 'quarter', 'rolling14', 'year'],
-        presentations: ['calendar', 'agenda', 'countdown', 'progress', 'hybrid', 'minimal'],
+        presentations: ['calendar', 'countdown', 'progress', 'hybrid'],
         lockScreenProfiles: ['standard', 'large-clock'],
         presets: [],
       };
@@ -598,6 +603,7 @@ export default function handler() {
         options.lockScreenProfiles,
         (value) => optionLabel(value),
       );
+      populateSelect('eventCount', options.eventCounts || [1, 2, 3, 4, 5], (value) => String(value));
 
       const presetSelect = byId('wallpaperPreset');
 
@@ -620,6 +626,7 @@ export default function handler() {
       byId('timeRange').value = settings.timeRange || settings.viewMode || 'quarter';
       byId('presentation').value = settings.presentation || 'calendar';
       byId('lockScreenProfile').value = settings.lockScreenProfile || 'standard';
+      byId('eventCount').value = String(settings.eventCount || 2);
       syncPresetSelection();
     }
 
@@ -818,6 +825,7 @@ export default function handler() {
             timeRange: byId('timeRange').value,
             presentation: byId('presentation').value,
             lockScreenProfile: byId('lockScreenProfile').value,
+            eventCount: Number(byId('eventCount').value),
             theme: byId('theme').value,
             timeZone: byId('timeZone').value.trim(),
           }),

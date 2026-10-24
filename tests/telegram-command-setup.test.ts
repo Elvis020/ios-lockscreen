@@ -46,6 +46,7 @@ describe('Telegram command setup', () => {
       'url',
       'add',
       'events',
+      'eventcount',
       'delete',
       'view',
       'range',
