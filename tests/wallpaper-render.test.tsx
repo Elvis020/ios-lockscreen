@@ -1,3 +1,4 @@
+import { isValidElement, type CSSProperties, type ReactNode } from 'react';
 import { describe, expect, it } from 'vitest';
 import {
   LOCK_SCREEN_PROFILES,
@@ -12,10 +13,12 @@ import {
   createWallpaperImageResponse,
   getCalendarRequiredHeight,
   getWallpaperHeaderCopy,
+  getWallpaperEventLayout,
   getWallpaperLayoutBounds,
   LOCK_SCREEN_CONTENT_BANDS,
   WALLPAPER_HEIGHT,
   WALLPAPER_WIDTH,
+  WallpaperCanvas,
 } from '../lib/wallpaperRenderer';
 
 const date = new Date('2026-10-23T12:00:00Z');
@@ -89,7 +92,16 @@ describe('wallpaper renderer', () => {
           if (bounds.eventsTop !== undefined && bounds.eventsBottom !== undefined) {
             expect(bounds.eventsTop).toBeGreaterThanOrEqual(profileBand.top);
             expect(bounds.eventsBottom).toBeLessThanOrEqual(profileBand.bottom);
+            expect(bounds.calendarBottom).toBeLessThanOrEqual(bounds.eventsTop);
           }
+
+          const eventLayout = getWallpaperEventLayout(model);
+          const requiredEventHeight =
+            eventLayout.limit * eventLayout.rowHeight +
+            Math.max(0, eventLayout.limit - 1) * eventLayout.rowGap +
+            eventLayout.overflowHeight;
+
+          expect(requiredEventHeight).toBeLessThanOrEqual(eventLayout.slotHeight);
         }
       }
     }
@@ -113,7 +125,7 @@ describe('wallpaper renderer', () => {
     expect(CALENDAR_DOT_GEOMETRY.year.size).toBeGreaterThanOrEqual(14);
   });
 
-  it('uses presentation-aware header copy without repeating progress metrics', () => {
+  it('uses minimal header copy and removes the quarter heading', () => {
     const progress = buildWallpaperModel({
       date,
       timeRange: 'year',
@@ -130,13 +142,124 @@ describe('wallpaper renderer', () => {
       presentation: 'countdown',
     });
 
-    expect(getWallpaperHeaderCopy(progress).subtitle).not.toMatch(/%|days? left/);
-    expect(getWallpaperHeaderCopy(minimal).subtitle).not.toMatch(/%|days? left/);
-    expect(getWallpaperHeaderCopy(countdown)).toEqual({
-      title: 'Next event',
-      subtitle: 'As of Oct 23, 2026',
+    const quarter = buildWallpaperModel({ date, timeRange: 'quarter' });
+
+    expect(getWallpaperHeaderCopy(progress)).toEqual({ title: '2026' });
+    expect(getWallpaperHeaderCopy(minimal)).toEqual({ title: 'October 2026' });
+    expect(getWallpaperHeaderCopy(countdown)).toEqual({ title: 'Next event' });
+    expect(getWallpaperHeaderCopy(quarter)).toEqual({
+      title: null,
+      subtitle: '25% complete · 69 days left',
+    });
+    expect(getWallpaperHeaderCopy(quarter, 'Custom title')).toEqual({
+      title: 'Custom title',
     });
     expect(getWallpaperHeaderCopy(countdown, 'Launch focus').title).toBe('Launch focus');
+  });
+
+  it('caps event rows according to the reserved space in each presentation', () => {
+    for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+      for (const presentation of PRESENTATIONS) {
+        const model = buildWallpaperModel({ date, presentation, lockScreenProfile });
+        const expected = {
+          calendar: 2,
+          hybrid: 2,
+          agenda: lockScreenProfile === 'large-clock' ? 4 : 5,
+          countdown: 1,
+          minimal: 1,
+          progress: 0,
+        };
+
+        expect(getWallpaperEventLayout(model).limit).toBe(expected[presentation]);
+      }
+    }
+  });
+
+  it('renders compact countdown rows and accurate overflow without dates', () => {
+    const manyEvents = Array.from({ length: 10 }, (_, index) => ({
+      name: `Upcoming event ${index + 1}`,
+      date: `2026-10-${String(index + 22).padStart(2, '0')}`,
+    }));
+    const model = buildWallpaperModel({
+      date,
+      timeRange: 'quarter',
+      publicEvents: manyEvents,
+    });
+    const { text, styles } = inspectCanvas(WallpaperCanvas({ model }));
+
+    expect(text).toContain('Upcoming event 2');
+    expect(text).toContain('Upcoming event 3');
+    expect(text).not.toContain('Upcoming event 4');
+    expect(text).toContain('Today');
+    expect(text).toContain('1d');
+    expect(text).toContain('+7 more');
+    expect(text).not.toContain('Q4 2026');
+    expect(text).not.toMatch(/Oct 2[3-9]/);
+    expect(text).toContain('25% complete · 69 days left');
+    expect(
+      styles.filter(({ height, overflow }) => height === 3 && overflow === 'hidden'),
+    ).toHaveLength(2);
+    expect(styles.some(({ width }) => width === '100%')).toBe(true);
+  });
+
+  it('keeps thin lines on event rows but not the large countdown display', () => {
+    for (const presentation of ['countdown', 'minimal'] as const) {
+      const model = buildWallpaperModel({
+        date,
+        presentation,
+        publicEvents: [{ name: 'Next milestone', date: '2026-11-14' }],
+      });
+      const { text, styles } = inspectCanvas(WallpaperCanvas({ model }));
+
+      expect(text).toContain('Next milestone');
+      expect(text).not.toContain('Nov 14');
+      expect(
+        styles.filter(({ height, overflow }) => height === 3 && overflow === 'hidden'),
+      ).toHaveLength(presentation === 'minimal' ? 1 : 0);
+      expect(styles.some(({ width }) => width === '51%')).toBe(
+        presentation === 'minimal',
+      );
+    }
+  });
+
+  it('restores weekday orientation and centers the quarter progress summary', () => {
+    const model = buildWallpaperModel({
+      date: new Date('2026-10-24T12:00:00Z'),
+      timeRange: 'quarter',
+    });
+    const { text, styles } = inspectCanvas(WallpaperCanvas({ model }));
+
+    expect(text).toContain('26% complete · 68 days left');
+    expect(text.match(/S M T W T F S/g)).toHaveLength(3);
+    expect(text).not.toContain('Q4 2026');
+    expect(
+      styles.some(
+        ({ width, textAlign, justifyContent }) =>
+          width === '100%' && textAlign === 'center' && justifyContent === 'center',
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps full month names on the multi-month dot grids', () => {
+    const model = buildWallpaperModel({ date, timeRange: 'quarter' });
+    const { text } = inspectCanvas(WallpaperCanvas({ model }));
+
+    expect(text).toContain('October');
+    expect(text).toContain('November');
+    expect(text).toContain('December');
+  });
+
+  it('matches the mock iOS date to the generated calendar date', () => {
+    const model = buildWallpaperModel({
+      date: new Date('2026-10-24T12:00:00Z'),
+      timeRange: 'quarter',
+    });
+    const { text } = inspectCanvas(
+      WallpaperCanvas({ model, options: { mockIosOverlay: true } }),
+    );
+
+    expect(text).toContain('Saturday, October 24');
+    expect(text).not.toContain('Friday, October 23');
   });
 
   it('keeps calibrated content bands above the notification region', () => {
@@ -147,6 +270,47 @@ describe('wallpaper renderer', () => {
     });
   });
 });
+
+function inspectCanvas(node: ReactNode): { text: string; styles: CSSProperties[] } {
+  const text: string[] = [];
+  const styles: CSSProperties[] = [];
+
+  function visit(child: ReactNode): void {
+    if (typeof child === 'string' || typeof child === 'number') {
+      text.push(String(child));
+
+      return;
+    }
+
+    if (Array.isArray(child)) {
+      child.forEach(visit);
+
+      return;
+    }
+
+    if (!isValidElement<{ children?: ReactNode; style?: CSSProperties }>(child)) {
+      return;
+    }
+
+    if (typeof child.type === 'function') {
+      const component = child.type as (props: unknown) => ReactNode;
+
+      visit(component(child.props));
+
+      return;
+    }
+
+    if (child.props.style) {
+      styles.push(child.props.style);
+    }
+
+    visit(child.props.children);
+  }
+
+  visit(node);
+
+  return { text: text.join(' '), styles };
+}
 
 function readPngDimension(bytes: Uint8Array, offset: number): number {
   return (

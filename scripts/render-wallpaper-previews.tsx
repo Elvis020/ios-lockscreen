@@ -11,11 +11,15 @@ import { buildWallpaperModel } from '../lib/wallpaperModel';
 import { createWallpaperImageResponse } from '../lib/wallpaperRenderer';
 
 const outputDirectory = process.argv[2] ?? '/private/tmp/calendar-lockscreen-previews';
-const previewDate = new Date('2026-10-23T12:00:00Z');
+const previewDate = new Date('2026-10-24T12:00:00Z');
 const previewEvents = [
+  ['A deliberately long event name that must truncate cleanly', '2026-10-23'],
   ['Planning review', '2026-10-23'],
   ['Product launch', '2026-10-24'],
-  ['A deliberately long event name that must truncate cleanly', '2026-10-27'],
+  ['Design review', '2026-10-27'],
+  ['Project milestone', '2026-10-29'],
+  ['Planning workshop', '2026-10-30'],
+  ['Team retrospective', '2026-11-01'],
   ['Design critique', '2026-11-02'],
   ['Quarterly check-in', '2026-11-12'],
   ['Team offsite', '2026-12-04'],
@@ -47,8 +51,26 @@ async function main(): Promise<void> {
     }
   }
 
+  const twoEventModel = buildWallpaperModel({
+    date: previewDate,
+    timeRange: 'quarter',
+    publicEvents: [
+      { name: 'Product launch', date: '2026-11-14' },
+      { name: 'Team offsite', date: '2026-12-19' },
+    ],
+  });
+
+  await writePng(
+    path.join(outputDirectory, 'quarter-event-lines.png'),
+    createWallpaperImageResponse(twoEventModel),
+  );
+  await writePng(
+    path.join(outputDirectory, 'quarter-event-lines-ios-overlay.png'),
+    createWallpaperImageResponse(twoEventModel, { mockIosOverlay: true }),
+  );
+
   console.log(
-    `Rendered ${WALLPAPER_PRESET_IDS.length * 4} PNG previews to ${outputDirectory}`,
+    `Rendered ${WALLPAPER_PRESET_IDS.length * 4 + 2} PNG previews to ${outputDirectory}`,
   );
 }
 

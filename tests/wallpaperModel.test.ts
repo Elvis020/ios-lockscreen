@@ -89,7 +89,7 @@ describe('buildWallpaperModel', () => {
       'November',
       'December',
     ]);
-    expect(quarter.events[0]?.countdownLabel).toBe('1 day');
+    expect(quarter.events[0]?.countdownLabel).toBe('1d');
     expect(year.monthGroups).toHaveLength(12);
   });
 
@@ -115,5 +115,61 @@ describe('buildWallpaperModel', () => {
     expect(agenda.period.endDate).toBe('2026-11-05');
     expect(agenda.events.map(({ name }) => name)).toEqual(['Last agenda day']);
     expect(calendar.events.map(({ name }) => name)).toContain('Later global event');
+  });
+
+  it('keeps every upcoming event for accurate overflow and calendar markers', () => {
+    const publicEvents = Array.from({ length: 10 }, (_, index) => ({
+      name: `Event ${index + 1}`,
+      date: `2026-10-${String(index + 22).padStart(2, '0')}`,
+    })).reverse();
+    const model = buildWallpaperModel({
+      date: new Date('2026-10-23T12:00:00Z'),
+      timeRange: 'month',
+      publicEvents,
+    });
+
+    expect(model.events).toHaveLength(9);
+    expect(model.events[0]).toMatchObject({ name: 'Event 2', countdownLabel: 'Today' });
+    expect(model.events.at(-1)).toMatchObject({
+      name: 'Event 10',
+      countdownLabel: '8d',
+    });
+    expect(model.cells.find(({ date }) => date === '2026-10-31')?.event).toBe(true);
+    expect(
+      model.monthGroups[0].cells.find((cell) => cell?.date === '2026-10-31')?.event,
+    ).toBe(true);
+  });
+
+  it('keeps countdown lines meaningful beyond the visible month or year', () => {
+    for (const timeRange of ['month', 'year'] as const) {
+      const model = buildWallpaperModel({
+        date: new Date('2026-10-23T12:00:00Z'),
+        timeRange,
+        publicEvents: [
+          { name: 'Today', date: '2026-10-23' },
+          { name: 'Next year', date: '2027-01-08' },
+        ],
+      });
+
+      expect(model.events[0].progressPercent).toBe(100);
+      expect(model.events[1].progressPercent).toBeGreaterThan(0);
+      expect(model.events[1].progressPercent).toBeLessThan(100);
+      expect(model.events[1].countdownLabel).toBe('77d');
+      expect(model.events[1]).not.toHaveProperty('dateLabel');
+      expect(model.events[1].date).toBe('2027-01-08');
+    }
+  });
+
+  it('starts a period-to-event timer at its inclusive first day', () => {
+    const model = buildWallpaperModel({
+      date: new Date('2026-10-01T12:00:00Z'),
+      timeRange: 'month',
+      publicEvents: [{ name: 'Tomorrow', date: '2026-10-02' }],
+    });
+
+    expect(model.events[0]).toMatchObject({
+      countdownLabel: '1d',
+      progressPercent: 50,
+    });
   });
 });

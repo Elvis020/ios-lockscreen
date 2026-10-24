@@ -10,6 +10,7 @@
     "test": "vitest run",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm test",
     "preview:wallpapers": "vite-node scripts/render-wallpaper-previews.tsx",
+    "preview:native-data": "vite-node scripts/render-native-wallpaper-fixtures.ts",
     "telegram:configure-commands": "node --env-file-if-exists=.env scripts/configure-telegram-commands.ts"
   },
   "keywords": [

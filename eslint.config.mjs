@@ -38,6 +38,31 @@ export default tseslint.config(
     },
   },
   {
+    files: ['scripts/scriptable/*.js'],
+    plugins: { '@stylistic': stylistic },
+    languageOptions: {
+      globals: {
+        args: 'readonly',
+        Color: 'readonly',
+        Data: 'readonly',
+        DrawContext: 'readonly',
+        Font: 'readonly',
+        Path: 'readonly',
+        Rect: 'readonly',
+        Script: 'readonly',
+        Size: 'readonly',
+      },
+    },
+    rules: {
+      '@stylistic/padding-line-between-statements': [
+        'error',
+        { blankLine: 'always', prev: '*', next: ['return', 'throw'] },
+        { blankLine: 'always', prev: ['const', 'let'], next: '*' },
+        { blankLine: 'any', prev: ['const', 'let'], next: ['const', 'let'] },
+      ],
+    },
+  },
+  {
     files: ['api/admin/create-invite.ts'],
     rules: {
       '@stylistic/padding-line-between-statements': 'off',

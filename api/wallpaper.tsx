@@ -8,6 +8,10 @@ import {
   type Presentation,
   type TimeRange,
 } from '../lib/preferences';
+import {
+  buildNativeWallpaperScene,
+  UnsupportedNativeLayoutError,
+} from '../lib/nativeWallpaperScene';
 import { isRedisConfigurationError } from '../lib/redis';
 import { getUser, getUserByWallpaperKey } from '../lib/tokenManager';
 import { isValidDateString } from '../lib/validation';
@@ -24,10 +28,32 @@ interface PublicEvent {
 }
 
 export default async function handler(req: Request) {
+  const url = new URL(req.url);
+  const native = url.searchParams.get('format') === 'native';
+
   try {
-    const url = new URL(req.url);
+    if (native && req.method !== 'GET') {
+      const response = nativeJsonResponse({ error: 'method_not_allowed' }, 405);
+
+      response.headers.set('Allow', 'GET');
+
+      return response;
+    }
+
     const wallpaperKey = url.searchParams.get('wallpaperKey');
     const legacyToken = url.searchParams.get('token');
+
+    if (native && url.searchParams.has('wallpaperKey') && !wallpaperKey) {
+      return nativeJsonResponse({ error: 'Invalid wallpaper credential' }, 401);
+    }
+
+    if (native && url.searchParams.has('token')) {
+      return nativeJsonResponse(
+        { error: 'Use the read-only wallpaper key, not the management token' },
+        400,
+      );
+    }
+
     const personalized = Boolean(wallpaperKey || legacyToken);
     const user = wallpaperKey
       ? await getUserByWallpaperKey(wallpaperKey)
@@ -36,6 +62,10 @@ export default async function handler(req: Request) {
         : null;
 
     if (personalized && !user) {
+      if (native) {
+        return nativeJsonResponse({ error: 'Invalid wallpaper credential' }, 401);
+      }
+
       return new Response('Invalid wallpaper credential', {
         status: 401,
         headers: { 'Cache-Control': 'no-store' },
@@ -53,14 +83,39 @@ export default async function handler(req: Request) {
       publicEvents: parsePublicEvents(url.searchParams.get('events')),
       dayOverride,
     });
+    const title = url.searchParams.get('title')?.slice(0, 40);
+
+    if (native) {
+      return nativeJsonResponse(buildNativeWallpaperScene(model, title));
+    }
+
     const response = createWallpaperImageResponse(model, {
-      title: url.searchParams.get('title')?.slice(0, 40),
+      title,
     });
 
     setCacheHeaders(response, personalized);
 
     return response;
   } catch (error) {
+    if (native) {
+      if (error instanceof UnsupportedNativeLayoutError) {
+        return nativeJsonResponse(
+          {
+            error: 'unsupported_native_layout',
+            message: error.message,
+            supportedRanges: ['week', 'month', 'quarter'],
+            supportedPresentations: ['calendar', 'hybrid'],
+          },
+          422,
+        );
+      }
+
+      return nativeJsonResponse(
+        { error: 'Unable to prepare native wallpaper' },
+        isRedisConfigurationError(error) ? 503 : 500,
+      );
+    }
+
     console.error('Error generating wallpaper:', error);
 
     if (isRedisConfigurationError(error)) {
@@ -75,6 +130,19 @@ export default async function handler(req: Request) {
       headers: { 'Cache-Control': 'no-store' },
     });
   }
+}
+
+function nativeJsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'private, no-store, max-age=0',
+      'CDN-Cache-Control': 'private, no-store',
+      'Vercel-CDN-Cache-Control': 'private, no-store',
+      'X-Content-Type-Options': 'nosniff',
+    },
+  });
 }
 
 function resolvePublicSelection(url: URL): {

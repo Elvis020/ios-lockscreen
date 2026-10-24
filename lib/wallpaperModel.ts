@@ -1,6 +1,5 @@
 import {
   dateAtPeriodDay,
-  dayInPeriod,
   getPeriodInfo,
   isWeekendDate,
   type PeriodInfo,
@@ -20,7 +19,6 @@ export interface DisplayEvent {
   id: string;
   name: string;
   date: string;
-  dateLabel: string;
   daysLeft: number;
   countdownLabel: string;
   progressPercent: number;
@@ -90,20 +88,18 @@ export function buildWallpaperModel(options: {
       }));
   const events = sourceEvents
     .map((event) => {
-      const eventDay = dayInPeriod(event.date, period);
+      const eventDay = diffDateStrings(period.startDate, event.date) + 1;
       const daysLeft = diffDateStrings(currentDate, event.date);
 
       return {
         id: event.id,
         name: event.name,
         date: event.date,
-        dateLabel: formatEventDate(event.date),
         daysLeft,
         countdownLabel: formatCountdown(daysLeft),
-        progressPercent:
-          eventDay === null
-            ? 0
-            : Math.round(Math.min(100, Math.max(0, (effectiveDay / eventDay) * 100))),
+        progressPercent: Math.round(
+          Math.min(100, Math.max(0, (effectiveDay / eventDay) * 100)),
+        ),
         source: event.source,
       };
     })
@@ -115,8 +111,7 @@ export function buildWallpaperModel(options: {
       const dateOrder = left.daysLeft - right.daysLeft;
 
       return dateOrder || left.name.localeCompare(right.name);
-    })
-    .slice(0, 7);
+    });
   const eventDates = new Set(events.map(({ date }) => date));
   const cells = Array.from({ length: period.totalDays }, (_, index) =>
     buildCell(dateAtPeriodDay(period.startDate, index + 1), currentDate, eventDates),
@@ -147,7 +142,7 @@ export function formatCountdown(daysLeft: number): string {
     return 'Today';
   }
 
-  return daysLeft === 1 ? '1 day' : `${daysLeft} days`;
+  return `${daysLeft}d`;
 }
 
 export function formatPeriodRemaining(daysLeft: number): string {
@@ -243,12 +238,4 @@ function parseDate(value: string): Date {
 
 function formatDate(date: Date): string {
   return date.toISOString().slice(0, 10);
-}
-
-function formatEventDate(date: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  }).format(parseDate(date));
 }

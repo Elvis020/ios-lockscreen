@@ -1,6 +1,22 @@
 import { ImageResponse } from '@vercel/og';
-import type { CSSProperties, ReactElement, ReactNode } from 'react';
+import type { CSSProperties, ReactElement } from 'react';
 import type { WallpaperTheme } from './preferences';
+import {
+  CONTENT_LEFT,
+  CONTENT_RIGHT,
+  getDayCardGeometry,
+  getMonthCollectionGeometry,
+  getMonthGeometry,
+  getWallpaperEventLayout,
+  getWallpaperHeaderCopy,
+  HEADER_HEIGHT,
+  HEADER_TO_PRESENTATION_GAP,
+  LOCK_SCREEN_CONTENT_BANDS,
+  WALLPAPER_HEIGHT,
+  WALLPAPER_WIDTH,
+  WEEKDAY_LABELS,
+  type MonthScale,
+} from './wallpaperLayout';
 import {
   formatPeriodRemaining,
   type DisplayEvent,
@@ -9,117 +25,18 @@ import {
   type WallpaperMonthGroup,
 } from './wallpaperModel';
 
-export const WALLPAPER_WIDTH = 1284;
-export const WALLPAPER_HEIGHT = 2778;
-
-const CONTENT_LEFT = 112;
-const CONTENT_RIGHT = 112;
-const HEADER_HEIGHT = 112;
-const HEADER_TO_PRESENTATION_GAP = 28;
-const WEEKDAY_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-
-export const LOCK_SCREEN_CONTENT_BANDS = {
-  standard: { top: 920, bottom: 2080 },
-  'large-clock': { top: 1120, bottom: 2080 },
-} as const;
-
-export const CALENDAR_DOT_GEOMETRY = {
-  shape: 'circle',
-  week: { size: 100, compactSize: 92, eventRingGap: 5, eventRingWidth: 3 },
-  month: { size: 68, eventRingGap: 4, eventRingWidth: 3 },
-  quarter: { size: 28, eventRingGap: 3, eventRingWidth: 2 },
-  year: { size: 16, eventRingGap: 2, eventRingWidth: 2 },
-} as const;
-
-export interface WallpaperLayoutBounds {
-  contentTop: number;
-  contentBottom: number;
-  presentationTop: number;
-  presentationBottom: number;
-  calendarTop?: number;
-  calendarBottom?: number;
-  eventsTop?: number;
-  eventsBottom?: number;
-}
-
-export function getWallpaperLayoutBounds(model: WallpaperModel): WallpaperLayoutBounds {
-  const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
-  const presentationTop = band.top + HEADER_HEIGHT + HEADER_TO_PRESENTATION_GAP;
-  const bounds: WallpaperLayoutBounds = {
-    contentTop: band.top,
-    contentBottom: band.bottom,
-    presentationTop,
-    presentationBottom: band.bottom,
-  };
-
-  if (model.presentation === 'calendar') {
-    const eventHeight = model.lockScreenProfile === 'large-clock' ? 230 : 250;
-    const gap = model.lockScreenProfile === 'large-clock' ? 16 : 24;
-    const eventLift = model.lockScreenProfile === 'large-clock' ? 48 : 32;
-
-    return {
-      ...bounds,
-      calendarTop: presentationTop,
-      calendarBottom: band.bottom - eventHeight - gap,
-      eventsTop: band.bottom - eventHeight - eventLift,
-      eventsBottom: band.bottom - eventLift,
-    };
-  }
-
-  if (model.presentation === 'hybrid') {
-    const eventHeight = 196;
-    const gap = 24;
-
-    return {
-      ...bounds,
-      calendarTop: presentationTop,
-      calendarBottom: band.bottom - eventHeight - gap,
-      eventsTop: band.bottom - eventHeight,
-      eventsBottom: band.bottom,
-    };
-  }
-
-  if (model.presentation === 'progress') {
-    return {
-      ...bounds,
-      calendarTop: presentationTop + 144,
-      calendarBottom: band.bottom,
-    };
-  }
-
-  return bounds;
-}
-
-export function getCalendarRequiredHeight(
-  model: WallpaperModel,
-  compact = false,
-): number {
-  if (model.timeRange === 'week' || model.timeRange === 'rolling14') {
-    const rows = Math.ceil(model.cells.length / 7);
-    const rowHeight = compact ? 158 : 164;
-    const gap = compact ? 20 : 30;
-
-    return rows * rowHeight + Math.max(0, rows - 1) * gap;
-  }
-
-  const groupCount = model.monthGroups.length;
-  const columns = groupCount === 1 ? 1 : groupCount <= 3 ? 3 : 4;
-  const rows = Math.ceil(groupCount / columns);
-  const scale = monthScale(model, groupCount);
-  const groupHeight =
-    scale === 'large'
-      ? 666
-      : scale === 'large-compact'
-        ? 568
-        : scale === 'medium'
-          ? 346
-          : scale === 'dots-compact'
-            ? 182
-            : 210;
-  const gap = scale === 'dots-compact' ? 10 : compact ? 10 : 14;
-
-  return rows * groupHeight + Math.max(0, rows - 1) * gap;
-}
+export {
+  CALENDAR_DOT_GEOMETRY,
+  getCalendarRequiredHeight,
+  getWallpaperEventLayout,
+  getWallpaperHeaderCopy,
+  getWallpaperLayoutBounds,
+  LOCK_SCREEN_CONTENT_BANDS,
+  WALLPAPER_HEIGHT,
+  WALLPAPER_WIDTH,
+  type WallpaperEventLayout,
+  type WallpaperLayoutBounds,
+} from './wallpaperLayout';
 
 interface WallpaperRenderOptions {
   title?: string;
@@ -182,7 +99,7 @@ export function WallpaperCanvas({
           <Presentation model={model} />
         </div>
       </div>
-      {options.mockIosOverlay ? <MockIosOverlay theme={theme} /> : null}
+      {options.mockIosOverlay ? <MockIosOverlay model={model} /> : null}
     </div>
   );
 }
@@ -205,60 +122,39 @@ function WallpaperHeader({
         justifyContent: 'center',
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          maxWidth: 1060,
-          overflow: 'hidden',
-          whiteSpace: 'nowrap',
-          textOverflow: 'ellipsis',
-          fontSize: 58,
-          lineHeight: 1.05,
-          fontWeight: 650,
-        }}
-      >
-        {copy.title}
-      </div>
-      <div
-        style={{
-          display: 'flex',
-          marginTop: 13,
-          color: model.theme.subtext,
-          fontSize: 26,
-        }}
-      >
-        {copy.subtitle}
-      </div>
+      {copy.title ? (
+        <div
+          style={{
+            display: 'flex',
+            maxWidth: 1060,
+            overflow: 'hidden',
+            whiteSpace: 'nowrap',
+            textOverflow: 'ellipsis',
+            fontSize: 42,
+            lineHeight: 1.05,
+            fontWeight: 500,
+          }}
+        >
+          {copy.title}
+        </div>
+      ) : null}
+      {copy.subtitle ? (
+        <div
+          style={{
+            display: 'flex',
+            width: '100%',
+            justifyContent: 'center',
+            textAlign: 'center',
+            color: model.theme.subtext,
+            fontSize: 26,
+            lineHeight: 1.25,
+          }}
+        >
+          {copy.subtitle}
+        </div>
+      ) : null}
     </div>
   );
-}
-
-export function getWallpaperHeaderCopy(
-  model: WallpaperModel,
-  title?: string,
-): { title: string; subtitle: string } {
-  if (model.presentation === 'countdown') {
-    return {
-      title: title || 'Next event',
-      subtitle: `As of ${formatContextDate(model.period.currentDate)}`,
-    };
-  }
-
-  if (
-    model.period.kind === 'rolling' ||
-    model.presentation === 'progress' ||
-    model.presentation === 'minimal'
-  ) {
-    return {
-      title: title || model.period.title,
-      subtitle: `${formatShortDate(model.period.startDate)} – ${formatShortDate(model.period.endDate)}`,
-    };
-  }
-
-  return {
-    title: title || model.period.title,
-    subtitle: `${model.period.percentComplete}% complete · ${formatPeriodRemaining(model.period.daysLeft)}`,
-  };
 }
 
 function Presentation({ model }: { model: WallpaperModel }): ReactElement {
@@ -286,24 +182,22 @@ function Presentation({ model }: { model: WallpaperModel }): ReactElement {
 }
 
 function Calendar({ model }: { model: WallpaperModel }): ReactElement {
-  const largeClock = model.lockScreenProfile === 'large-clock';
-  const eventLift = largeClock ? 48 : 32;
+  const layout = getWallpaperEventLayout(model);
 
   return (
-    <div style={columnStyle}>
+    <div style={{ ...columnStyle, paddingBottom: layout.lift }}>
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <CalendarVisual model={model} />
       </div>
       <div
         style={{
           display: 'flex',
-          position: 'relative',
-          top: -eventLift,
-          height: largeClock ? 230 : 250,
-          marginTop: largeClock ? 16 : 24,
+          height: layout.slotHeight,
+          flexShrink: 0,
+          marginTop: layout.sectionGap,
         }}
       >
-        <EventList model={model} limit={3} compact />
+        <EventList model={model} />
       </div>
     </div>
   );
@@ -312,10 +206,7 @@ function Calendar({ model }: { model: WallpaperModel }): ReactElement {
 function Agenda({ model }: { model: WallpaperModel }): ReactElement {
   return (
     <div style={columnStyle}>
-      <SectionLabel theme={model.theme}>Upcoming</SectionLabel>
-      <div style={{ display: 'flex', flex: 1, marginTop: 18 }}>
-        <EventList model={model} limit={5} />
-      </div>
+      <EventList model={model} />
     </div>
   );
 }
@@ -373,16 +264,6 @@ function Countdown({ model }: { model: WallpaperModel }): ReactElement {
       >
         {event.name}
       </div>
-      <div
-        style={{
-          display: 'flex',
-          marginTop: 16,
-          color: model.theme.subtext,
-          fontSize: 28,
-        }}
-      >
-        {event.dateLabel}
-      </div>
     </div>
   );
 }
@@ -410,13 +291,22 @@ function Progress({ model }: { model: WallpaperModel }): ReactElement {
 }
 
 function Hybrid({ model }: { model: WallpaperModel }): ReactElement {
+  const layout = getWallpaperEventLayout(model);
+
   return (
     <div style={columnStyle}>
       <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <CalendarVisual model={model} compact />
       </div>
-      <div style={{ display: 'flex', height: 196, marginTop: 24 }}>
-        <EventList model={model} limit={2} compact />
+      <div
+        style={{
+          display: 'flex',
+          height: layout.slotHeight,
+          flexShrink: 0,
+          marginTop: layout.sectionGap,
+        }}
+      >
+        <EventList model={model} />
       </div>
     </div>
   );
@@ -442,42 +332,7 @@ function Minimal({ model }: { model: WallpaperModel }): ReactElement {
         }}
       />
       {event ? (
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <SectionLabel theme={model.theme}>Next</SectionLabel>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'baseline',
-              marginTop: 18,
-              gap: 32,
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                maxWidth: 800,
-                overflow: 'hidden',
-                whiteSpace: 'nowrap',
-                textOverflow: 'ellipsis',
-                fontSize: 44,
-                fontWeight: 600,
-              }}
-            >
-              {event.name}
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                flexShrink: 0,
-                color: model.theme.current,
-                fontSize: 34,
-              }}
-            >
-              {event.countdownLabel}
-            </div>
-          </div>
-        </div>
+        <EventRow event={event} theme={model.theme} compact={false} height={144} />
       ) : (
         <EmptyEvents theme={model.theme} compact />
       )}
@@ -507,13 +362,14 @@ function DayRows({
   compact: boolean;
 }): ReactElement {
   const rows = chunk(model.cells, 7);
+  const geometry = getDayCardGeometry(compact);
 
   return (
     <div
       style={{
         ...columnStyle,
         justifyContent: 'center',
-        gap: compact ? 20 : 30,
+        gap: geometry.gap,
       }}
     >
       {rows.map((row, rowIndex) => (
@@ -543,11 +399,13 @@ function DayCard({
   theme: WallpaperTheme;
   compact: boolean;
 }): ReactElement {
+  const geometry = getDayCardGeometry(compact);
+
   return (
     <div
       style={{
-        width: 132,
-        height: compact ? 158 : 164,
+        width: geometry.width,
+        height: geometry.height,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -558,7 +416,7 @@ function DayCard({
         style={{
           display: 'flex',
           color: theme.subtext,
-          fontSize: 24,
+          fontSize: geometry.labelSize,
           fontWeight: 650,
           textTransform: 'uppercase',
         }}
@@ -567,20 +425,16 @@ function DayCard({
       </div>
       <div
         style={{
-          marginTop: 12,
+          marginTop: geometry.labelGap,
           display: 'flex',
         }}
       >
         <CalendarDot
           cell={cell}
           theme={theme}
-          size={
-            compact
-              ? CALENDAR_DOT_GEOMETRY.week.compactSize
-              : CALENDAR_DOT_GEOMETRY.week.size
-          }
-          eventRingGap={CALENDAR_DOT_GEOMETRY.week.eventRingGap}
-          eventRingWidth={CALENDAR_DOT_GEOMETRY.week.eventRingWidth}
+          size={geometry.size}
+          eventRingGap={geometry.eventRingGap}
+          eventRingWidth={geometry.eventRingWidth}
         />
       </div>
     </div>
@@ -597,10 +451,8 @@ function MonthCollection({
   compact?: boolean;
 }): ReactElement {
   const groupCount = groups.length;
-  const columns = groupCount === 1 ? 1 : groupCount <= 3 ? 3 : 4;
-  const rows = Math.ceil(groupCount / columns);
-  const width = `${100 / columns - (columns > 1 ? 2 : 0)}%`;
-  const scale = monthScale(model, groupCount);
+  const { columns, rows, widthPercent, scale } = getMonthCollectionGeometry(model);
+  const width = `${widthPercent}%`;
 
   return (
     <div
@@ -642,11 +494,7 @@ function MonthGroup({
   showLabel: boolean;
 }): ReactElement {
   const rows = chunk(group.cells, 7);
-  const large = scale === 'large';
-  const largeCompact = scale === 'large-compact';
-  const dots = scale === 'dots' || scale === 'dots-compact';
-  const dotsCompact = scale === 'dots-compact';
-  const cellHeight = large ? 88 : largeCompact ? 78 : dotsCompact ? 22 : dots ? 24 : 40;
+  const geometry = getMonthGeometry(scale);
 
   return (
     <div
@@ -654,31 +502,23 @@ function MonthGroup({
         width,
         display: 'flex',
         flexDirection: 'column',
-        padding: large
-          ? '22px 20px'
-          : largeCompact
-            ? '10px 16px'
-            : dotsCompact
-              ? '6px 8px'
-              : dots
-                ? '12px 10px'
-                : '16px 12px',
+        padding: `${geometry.paddingY}px ${geometry.paddingX}px`,
       }}
     >
       {showLabel ? (
         <div
           style={{
             display: 'flex',
-            marginBottom: large ? 16 : largeCompact ? 8 : dotsCompact ? 4 : dots ? 8 : 12,
+            marginBottom: geometry.labelGap,
             color: theme.text,
-            fontSize: large ? 34 : largeCompact ? 32 : dots ? 28 : 32,
+            fontSize: geometry.labelSize,
             fontWeight: 650,
           }}
         >
           {group.label}
         </div>
       ) : null}
-      {!dots ? (
+      {geometry.showWeekdays ? (
         <div style={{ display: 'flex', width: '100%', marginBottom: 7 }}>
           {WEEKDAY_LABELS.map((label, index) => (
             <div
@@ -688,7 +528,7 @@ function MonthGroup({
                 display: 'flex',
                 justifyContent: 'center',
                 color: theme.subtext,
-                fontSize: large ? 25 : largeCompact ? 24 : 14,
+                fontSize: geometry.weekdaySize,
                 fontWeight: 650,
               }}
             >
@@ -704,7 +544,7 @@ function MonthGroup({
               key={cell?.date ?? `blank-${rowIndex}-${cellIndex}`}
               cell={cell}
               theme={theme}
-              height={cellHeight}
+              height={geometry.cellHeight}
               scale={scale}
             />
           ))}
@@ -725,20 +565,7 @@ function MonthCell({
   height: number;
   scale: MonthScale;
 }): ReactElement {
-  const large = scale === 'large';
-  const largeCompact = scale === 'large-compact';
-  const dots = scale === 'dots' || scale === 'dots-compact';
-  const dotsCompact = scale === 'dots-compact';
-  const geometry = large
-    ? CALENDAR_DOT_GEOMETRY.month
-    : largeCompact
-      ? { ...CALENDAR_DOT_GEOMETRY.month, size: 64 }
-      : dots
-        ? {
-            ...CALENDAR_DOT_GEOMETRY.year,
-            size: dotsCompact ? 14 : CALENDAR_DOT_GEOMETRY.year.size,
-          }
-        : CALENDAR_DOT_GEOMETRY.quarter;
+  const geometry = getMonthGeometry(scale).dot;
 
   return (
     <div
@@ -815,43 +642,39 @@ function CalendarDot({
   );
 }
 
-function EventList({
-  model,
-  limit,
-  compact = false,
-}: {
-  model: WallpaperModel;
-  limit: number;
-  compact?: boolean;
-}): ReactElement {
-  const visible = model.events.slice(0, limit);
+function EventList({ model }: { model: WallpaperModel }): ReactElement {
+  const layout = getWallpaperEventLayout(model);
+  const visible = model.events.slice(0, layout.limit);
   const overflow = Math.max(0, model.events.length - visible.length);
 
   if (!visible.length) {
-    return <EmptyEvents theme={model.theme} compact={compact} />;
+    return <EmptyEvents theme={model.theme} compact={layout.compact} />;
   }
 
   return (
     <div style={columnStyle}>
-      {visible.map((event, index) => (
-        <EventRow
-          key={event.id}
-          event={event}
-          theme={model.theme}
-          bordered={index > 0}
-          compact={compact}
-        />
-      ))}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: layout.rowGap }}>
+        {visible.map((event) => (
+          <EventRow
+            key={event.id}
+            event={event}
+            theme={model.theme}
+            compact={layout.compact}
+            height={layout.rowHeight}
+          />
+        ))}
+      </div>
       {overflow ? (
         <div
           style={{
             display: 'flex',
-            paddingTop: 10,
+            height: layout.overflowHeight,
+            alignItems: 'flex-end',
             color: model.theme.subtext,
-            fontSize: compact ? 20 : 24,
+            fontSize: layout.compact ? 20 : 24,
           }}
         >
-          +{overflow} more
+          {`+${overflow} more`}
         </div>
       ) : null}
     </div>
@@ -861,41 +684,43 @@ function EventList({
 function EventRow({
   event,
   theme,
-  bordered,
   compact,
+  height,
 }: {
   event: DisplayEvent;
   theme: WallpaperTheme;
-  bordered: boolean;
   compact: boolean;
+  height: number;
 }): ReactElement {
   return (
     <div
       style={{
-        minHeight: compact ? 66 : 100,
+        height,
+        flexShrink: 0,
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 28,
-        borderTop: bordered ? `1px solid ${theme.future}` : 'none',
+        flexDirection: 'column',
+        justifyContent: 'center',
       }}
     >
       <div
         style={{
           display: 'flex',
-          flexDirection: 'column',
-          minWidth: 0,
-          flex: 1,
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 28,
         }}
       >
         <div
           style={{
             display: 'flex',
+            minWidth: 0,
+            flex: 1,
             overflow: 'hidden',
             whiteSpace: 'nowrap',
             textOverflow: 'ellipsis',
-            fontSize: compact ? 34 : 36,
-            fontWeight: 550,
+            fontSize: compact ? 34 : 40,
+            lineHeight: 1.2,
+            fontWeight: 500,
           }}
         >
           {event.name}
@@ -903,25 +728,49 @@ function EventRow({
         <div
           style={{
             display: 'flex',
-            marginTop: compact ? 3 : 8,
-            color: theme.subtext,
-            fontSize: compact ? 22 : 24,
+            flexShrink: 0,
+            color: event.daysLeft <= 1 ? theme.current : theme.subtext,
+            fontSize: compact ? 28 : 32,
+            lineHeight: 1.2,
+            fontWeight: 500,
           }}
         >
-          {event.dateLabel}
+          {event.countdownLabel}
         </div>
       </div>
+      <div style={{ display: 'flex', marginTop: compact ? 12 : 18 }}>
+        <EventTimer event={event} theme={theme} />
+      </div>
+    </div>
+  );
+}
+
+function EventTimer({
+  event,
+  theme,
+}: {
+  event: DisplayEvent;
+  theme: WallpaperTheme;
+}): ReactElement {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        width: '100%',
+        height: 3,
+        overflow: 'hidden',
+        borderRadius: 6,
+        backgroundColor: theme.future,
+      }}
+    >
       <div
         style={{
           display: 'flex',
-          flexShrink: 0,
-          color: event.daysLeft <= 1 ? theme.current : theme.subtext,
-          fontSize: compact ? 28 : 30,
-          fontWeight: 600,
+          width: `${event.progressPercent}%`,
+          height: '100%',
+          backgroundColor: theme.current,
         }}
-      >
-        {event.countdownLabel}
-      </div>
+      />
     </div>
   );
 }
@@ -1039,44 +888,19 @@ function EmptyEvents({
       >
         No upcoming events
       </div>
-      <div
-        style={{
-          display: 'flex',
-          marginTop: 8,
-          color: theme.subtext,
-          fontSize: compact ? 18 : 24,
-        }}
-      >
-        Add one from the dashboard or Telegram.
-      </div>
     </div>
   );
 }
 
-function SectionLabel({
-  theme,
-  children,
-}: {
-  theme: WallpaperTheme;
-  children: ReactNode;
-}): ReactElement {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        color: theme.subtext,
-        fontSize: 20,
-        fontWeight: 700,
-        letterSpacing: 1.4,
-        textTransform: 'uppercase',
-      }}
-    >
-      {children}
-    </div>
-  );
-}
+function MockIosOverlay({ model }: { model: WallpaperModel }): ReactElement {
+  const { theme } = model;
+  const dateLabel = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(`${model.period.currentDate}T12:00:00Z`));
 
-function MockIosOverlay({ theme }: { theme: WallpaperTheme }): ReactElement {
   return (
     <div
       style={{
@@ -1100,9 +924,7 @@ function MockIosOverlay({ theme }: { theme: WallpaperTheme }): ReactElement {
           alignItems: 'center',
         }}
       >
-        <div style={{ display: 'flex', fontSize: 30, fontWeight: 600 }}>
-          Friday, October 23
-        </div>
+        <div style={{ display: 'flex', fontSize: 30, fontWeight: 600 }}>{dateLabel}</div>
         <div
           style={{
             display: 'flex',
@@ -1184,20 +1006,6 @@ const columnStyle: CSSProperties = {
   flexDirection: 'column',
 };
 
-type MonthScale = 'large' | 'large-compact' | 'medium' | 'dots' | 'dots-compact';
-
-function monthScale(model: WallpaperModel, groupCount: number): MonthScale {
-  if (groupCount === 1) {
-    return model.lockScreenProfile === 'large-clock' ? 'large-compact' : 'large';
-  }
-
-  if (groupCount <= 3) {
-    return 'medium';
-  }
-
-  return model.lockScreenProfile === 'large-clock' ? 'dots-compact' : 'dots';
-}
-
 function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
 
@@ -1206,21 +1014,4 @@ function chunk<T>(items: T[], size: number): T[][] {
   }
 
   return chunks;
-}
-
-function formatShortDate(date: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  }).format(new Date(`${date}T00:00:00Z`));
-}
-
-function formatContextDate(date: string): string {
-  return new Intl.DateTimeFormat('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    timeZone: 'UTC',
-  }).format(new Date(`${date}T00:00:00Z`));
 }
