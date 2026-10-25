@@ -29,7 +29,7 @@ function scene() {
   );
 }
 
-function runtime(input: unknown) {
+function runtime(input: unknown, { disableSegmenter = false } = {}) {
   const draw = {
     setFillColor: vi.fn(),
     fillRect: vi.fn(),
@@ -77,6 +77,10 @@ function runtime(input: unknown) {
     Script: { setShortcutOutput: output, complete },
   };
 
+  if (disableSegmenter) {
+    Object.assign(nativeGlobals, { Intl: {} });
+  }
+
   return {
     draw,
     createContext,
@@ -89,6 +93,46 @@ function runtime(input: unknown) {
         contextCodeGeneration: { strings: false, wasm: false },
       }),
   };
+}
+
+function textScene({
+  value,
+  width,
+  size,
+  truncate = true,
+}: {
+  value: string;
+  width: number;
+  size: number;
+  truncate?: boolean;
+}) {
+  return {
+    version: 1,
+    width: 1284,
+    height: 2778,
+    background: '#1c1c1c',
+    commands: [
+      {
+        kind: 'text',
+        x: 112,
+        y: 1200,
+        width,
+        height: Math.ceil(size * 1.2),
+        value,
+        color: '#e5e5e5',
+        size,
+        font: 'medium',
+        align: 'left',
+        truncate,
+      },
+    ],
+  };
+}
+
+function renderedText(harness: ReturnType<typeof runtime>): string {
+  harness.run();
+
+  return harness.draw.drawTextInRect.mock.calls[0][0];
 }
 
 describe('Scriptable native wallpaper adapter (simulated runtime)', () => {
@@ -107,13 +151,67 @@ describe('Scriptable native wallpaper adapter (simulated runtime)', () => {
       expect(harness.nativeGlobals.Font.mediumSystemFont).toHaveBeenCalled();
       expect(harness.draw.fillEllipse).toHaveBeenCalled();
       expect(harness.draw.fillPath).toHaveBeenCalled();
-      expect(
-        harness.draw.drawTextInRect.mock.calls.some(([value]) => value.endsWith('…')),
-      ).toBe(true);
       expect(harness.output).toHaveBeenCalledExactlyOnceWith('iVBORw==');
       expect(harness.complete).toHaveBeenCalledOnce();
     },
   );
+
+  it('uses the full one-column name frame before truncating event text', () => {
+    const value = 'Optometrist appointment and prescription review';
+    const harness = runtime(textScene({ value, width: 886, size: 34 }));
+
+    expect(renderedText(harness)).toBe(value);
+  });
+
+  it.each([
+    ['one-column', 886, 34],
+    ['dense two-column', 377, 24],
+  ])('truncates near the edge of a %s name frame', (_layout, width, size) => {
+    const value =
+      'Quarterly international partnership planning workshop in Accra and Kumasi';
+    const harness = runtime(textScene({ value, width, size }));
+    const rendered = renderedText(harness);
+    const oldCharacterLimit = Math.floor(width / size);
+
+    expect(rendered.endsWith('…')).toBe(true);
+    expect(value.startsWith(rendered.slice(0, -1))).toBe(true);
+    expect(Array.from(rendered).length).toBeGreaterThan(oldCharacterLimit);
+  });
+
+  it.each([false, true])(
+    'keeps emoji sequences intact when text must be truncated (fallback: %s)',
+    (disableSegmenter) => {
+      const value = 'Team 👩🏽‍💻 planning in Ghana 🇬🇭 with regional partners';
+      const harness = runtime(textScene({ value, width: 360, size: 34 }), {
+        disableSegmenter,
+      });
+      const rendered = renderedText(harness);
+
+      expect(rendered.endsWith('…')).toBe(true);
+      expect(rendered.includes('👩🏽‍💻')).toBe(true);
+      expect(
+        ['\u200d', '\ufe0e', '\ufe0f'].some((suffix) => rendered.endsWith(`${suffix}…`)),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    ['Indic conjuncts', 'Update क्षक्षक्ष planning with regional partners'],
+    ['Hangul Jamo', 'Update 한글 planning with regional partners'],
+  ])('uses safe word boundaries for %s without Intl.Segmenter', (_script, value) => {
+    const harness = runtime(textScene({ value, width: 220, size: 34 }), {
+      disableSegmenter: true,
+    });
+
+    expect(renderedText(harness)).toBe('Update…');
+  });
+
+  it('leaves non-truncating text commands unchanged', () => {
+    const value = 'A deliberately long centered heading that may exceed its frame';
+    const harness = runtime(textScene({ value, width: 260, size: 34, truncate: false }));
+
+    expect(renderedText(harness)).toBe(value);
+  });
 
   it.each(EVENT_COUNTS)(
     'runs all active scenes with event count %i through the unchanged adapter',

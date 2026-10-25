@@ -66,9 +66,10 @@ bar or redundant year/quarter heading is added. Saved
 Year/progress settings render identically to Year/calendar. Countdown retains its
 featured-event presentation rather than adding a dot field.
 
-These refinements change server-side drawing data only. The scene stays at version 1:
-existing Scriptable code and native Shortcut URLs do not need changing. After the
-deployment, rerun the same Shortcut to fetch the revised layout.
+Earlier layout refinements changed server-side drawing data only. This event-name
+fitting release also changes the on-phone renderer, so replace the contents of the
+installed **Calendar Lockscreen Native** Scriptable script before rerunning the
+Shortcut. The scene stays at version 1, and the Shortcut and its URL remain unchanged.
 
 The installed adapter accepts native text up to 80px. Countdown uses an 80px number
 in both renderers. Neither

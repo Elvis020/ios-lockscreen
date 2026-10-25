@@ -156,20 +156,175 @@ function hasOnlyKeys(value, keys) {
   return Object.keys(value).every((key) => keys.includes(key));
 }
 
+function splitTextUnits(value) {
+  if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+    const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
+    return {
+      values: Array.from(segmenter.segment(value), ({ segment }) => segment),
+      wordSafeFallback: false,
+    };
+  }
+
+  // Older JavaScriptCore versions do not expose the Unicode grapheme algorithm.
+  // Whole non-whitespace tokens are safe boundaries for every script, including
+  // Indic conjuncts and Hangul Jamo; the tradeoff is word-level truncation.
+  return {
+    values: value.match(/\s+|\S+/gu) ?? [],
+    wordSafeFallback: true,
+  };
+}
+
+function isGraphemeExtension(character, codePoint) {
+  return (
+    character === '\u200d' ||
+    /\p{Mark}/u.test(character) ||
+    (codePoint >= 0xfe00 && codePoint <= 0xfe0f) ||
+    (codePoint >= 0x1f3fb && codePoint <= 0x1f3ff) ||
+    (codePoint >= 0xe0020 && codePoint <= 0xe007f)
+  );
+}
+
+function estimateBaseWidth(character) {
+  const codePoint = character.codePointAt(0);
+
+  if (/\s/u.test(character)) {
+    return 0.3;
+  }
+
+  if (character === '…') {
+    return 1;
+  }
+
+  if (/[MWmw@%&]/u.test(character)) {
+    return 0.86;
+  }
+
+  if (/[ilIjt1|!.,:;'`]/u.test(character)) {
+    return 0.32;
+  }
+
+  if ('fr()[]{}'.includes(character)) {
+    return 0.4;
+  }
+
+  if (/[0-9]/u.test(character)) {
+    return 0.56;
+  }
+
+  if (/[A-Z]/u.test(character)) {
+    return 0.65;
+  }
+
+  if (/[a-z]/u.test(character)) {
+    return 0.52;
+  }
+
+  if (codePoint <= 0x024f) {
+    return 0.56;
+  }
+
+  // Emoji, CJK and other fallback-font glyphs stay conservatively full-width.
+  return 1;
+}
+
+function estimateGraphemeWidth(grapheme) {
+  const base = Array.from(grapheme).find((character) => {
+    const codePoint = character.codePointAt(0);
+
+    return !isGraphemeExtension(character, codePoint);
+  });
+
+  return base ? estimateBaseWidth(base) : 0;
+}
+
+function estimateWordSafeWidth(value) {
+  let total = 0;
+  let joined = false;
+  let regionalIndicators = 0;
+
+  for (const character of Array.from(value)) {
+    const codePoint = character.codePointAt(0);
+
+    if (character === '\u200d') {
+      joined = true;
+      continue;
+    }
+
+    if (isGraphemeExtension(character, codePoint)) {
+      continue;
+    }
+
+    if (joined) {
+      joined = false;
+      continue;
+    }
+
+    if (codePoint >= 0x1f1e6 && codePoint <= 0x1f1ff) {
+      regionalIndicators += 1;
+
+      if (regionalIndicators % 2 === 0) {
+        continue;
+      }
+    } else {
+      regionalIndicators = 0;
+    }
+
+    total += estimateBaseWidth(character);
+  }
+
+  return total;
+}
+
+function fitSingleLineText(value, width, size, truncate) {
+  if (!truncate) {
+    return value;
+  }
+
+  const { values, wordSafeFallback } = splitTextUnits(value);
+  const estimateWidth = wordSafeFallback ? estimateWordSafeWidth : estimateGraphemeWidth;
+  const availableWidth = (width * 0.97) / size;
+  const fullWidth = values.reduce(
+    (total, textUnit) => total + estimateWidth(textUnit),
+    0,
+  );
+
+  if (fullWidth <= availableWidth) {
+    return value;
+  }
+
+  const ellipsisWidth = estimateGraphemeWidth('…');
+  const visible = [];
+  let usedWidth = 0;
+
+  for (const textUnit of values) {
+    const textUnitWidth = estimateWidth(textUnit);
+
+    if (usedWidth + textUnitWidth + ellipsisWidth > availableWidth) {
+      break;
+    }
+
+    visible.push(textUnit);
+    usedWidth += textUnitWidth;
+  }
+
+  return visible.join('').trimEnd() + '…';
+}
+
 function drawText(context, command) {
   const fonts = {
     system: (size) => Font.systemFont(size),
     medium: (size) => Font.mediumSystemFont(size),
     semibold: (size) => Font.semiboldSystemFont(size),
   };
-  const characters = Array.from(command.value);
-  // Conservative single-line fit; exact native text measurement is not exposed
-  // by DrawContext. Device QA must check long names and complex scripts.
-  const capacity = Math.max(1, Math.floor(command.width / command.size));
-  const value =
-    command.truncate && characters.length > capacity
-      ? characters.slice(0, capacity - 1).join('') + '…'
-      : command.value;
+  // DrawContext does not expose text measurement. Estimate SF advances instead of
+  // treating every character as a full em, and only cut at grapheme boundaries.
+  const value = fitSingleLineText(
+    command.value,
+    command.width,
+    command.size,
+    command.truncate,
+  );
 
   context.setFont(fonts[command.font](command.size));
   context.setTextColor(new Color(command.color));
