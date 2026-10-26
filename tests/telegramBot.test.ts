@@ -49,6 +49,33 @@ describe('Telegram commands', () => {
     expect(help).toContain('/sync');
   });
 
+  it('explains how to connect Google instead of reporting zero cached events', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    const result = await processTelegramUpdate(
+      telegramUpdate('/sync'),
+      'https://example.com',
+      { key: 'telegram:update:done:123', ttlSeconds: 86_400 },
+    );
+
+    expect(deliveryBody(0)).toMatchObject({
+      text: expect.stringContaining('Google Calendar is not connected'),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: 'Connect Google Calendar',
+              url: 'https://example.com/app',
+            },
+          ],
+        ],
+      },
+    });
+    expect(deliveryBody(0).text).not.toContain('0 cached events');
+    expect(result.completionCommitted).toBe(false);
+  });
+
   it.each(['agenda', 'minimal'])(
     'does not offer or select retired %s views',
     async (retired) => {

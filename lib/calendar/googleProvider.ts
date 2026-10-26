@@ -1,9 +1,14 @@
 import type { CalendarEvent } from '../userSchema';
-import type { CalendarProvider, ConnectedGoogleAccount } from './types';
+import type {
+  CalendarProvider,
+  CalendarSyncBatch,
+  ConnectedGoogleAccount,
+} from './types';
 
 interface GoogleTokenResponse {
   access_token?: string;
   refresh_token?: string;
+  error?: string;
   error_description?: string;
 }
 
@@ -21,7 +26,24 @@ interface GoogleEventsResponse {
   }>;
 }
 
+interface GoogleCalendarListResponse {
+  nextPageToken?: string;
+  items?: GoogleCalendarListEntry[];
+}
+
+interface GoogleCalendarListEntry {
+  id?: string;
+  summary?: string;
+  summaryOverride?: string;
+  primary?: boolean;
+  selected?: boolean;
+  hidden?: boolean;
+  deleted?: boolean;
+}
+
 const MAX_EVENT_PAGES = 20;
+const MAX_CALENDAR_PAGES = 10;
+const MAX_VISIBLE_CALENDARS = 20;
 
 export class GoogleCalendarProvider implements CalendarProvider {
   createAuthorizationUrl(state: string, codeChallenge: string): string {
@@ -89,69 +111,180 @@ export class GoogleCalendarProvider implements CalendarProvider {
     accountId: string,
     accountEmail: string,
     timeZone: string,
-  ): Promise<CalendarEvent[]> {
+  ): Promise<CalendarSyncBatch> {
     const accessToken = await refreshAccessToken(encryptedRefreshToken);
     const now = new Date();
     const end = new Date(now);
 
     end.setUTCFullYear(end.getUTCFullYear() + 1);
-    const params = new URLSearchParams({
-      singleEvents: 'true',
-      orderBy: 'startTime',
-      maxResults: '250',
-      timeMin: now.toISOString(),
-      timeMax: end.toISOString(),
-      timeZone,
-    });
+    const calendars = await listVisibleCalendars(accessToken);
     const events: CalendarEvent[] = [];
-    let nextPageToken: string | undefined;
 
-    for (let page = 0; page < MAX_EVENT_PAGES; page += 1) {
-      if (nextPageToken) {
-        params.set('pageToken', nextPageToken);
-      } else {
-        params.delete('pageToken');
-      }
-
-      const response = await fetch(
-        `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`,
-        { headers: { Authorization: `Bearer ${accessToken}` } },
-      );
-      const payload = (await response.json()) as GoogleEventsResponse;
-
-      if (!response.ok) {
-        throw new Error('Unable to sync Google Calendar');
-      }
-
+    for (const calendar of calendars) {
       events.push(
-        ...(payload.items ?? []).flatMap((event) => {
-          const date = event.start?.date ?? event.start?.dateTime?.slice(0, 10);
-
-          if (!event.id || !date) {
-            return [];
-          }
-
-          return [
-            {
-              id: `${accountId}:${event.id}`,
-              name: (event.summary ?? 'Untitled event').slice(0, 50),
-              date,
-              accountEmail,
-              calendarName: event.organizer?.displayName ?? 'Primary',
-            },
-          ];
-        }),
+        ...(await listCalendarEvents({
+          accessToken,
+          accountEmail,
+          accountId,
+          calendar,
+          end,
+          now,
+          timeZone,
+        })),
       );
-
-      nextPageToken = payload.nextPageToken;
-
-      if (!nextPageToken) {
-        return events;
-      }
     }
 
-    throw new Error('Google Calendar returned too many event pages');
+    events.sort(
+      (left, right) =>
+        left.date.localeCompare(right.date) || left.name.localeCompare(right.name),
+    );
+
+    return {
+      calendarCount: calendars.length,
+      events,
+      windowStart: now.toISOString().slice(0, 10),
+      windowEnd: end.toISOString().slice(0, 10),
+    };
   }
+}
+
+async function listVisibleCalendars(
+  accessToken: string,
+): Promise<Array<GoogleCalendarListEntry & { id: string }>> {
+  const calendars: Array<GoogleCalendarListEntry & { id: string }> = [];
+  const params = new URLSearchParams({
+    maxResults: '250',
+    minAccessRole: 'reader',
+    showDeleted: 'false',
+    showHidden: 'false',
+  });
+  let nextPageToken: string | undefined;
+
+  for (let page = 0; page < MAX_CALENDAR_PAGES; page += 1) {
+    if (nextPageToken) {
+      params.set('pageToken', nextPageToken);
+    } else {
+      params.delete('pageToken');
+    }
+
+    const response = await fetch(
+      `https://www.googleapis.com/calendar/v3/users/me/calendarList?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    const payload = (await response.json()) as GoogleCalendarListResponse;
+
+    if (!response.ok) {
+      throw new Error('Unable to list Google calendars');
+    }
+
+    calendars.push(
+      ...(payload.items ?? []).flatMap((calendar) =>
+        calendar.id &&
+        !calendar.deleted &&
+        !calendar.hidden &&
+        (calendar.primary || calendar.selected)
+          ? [{ ...calendar, id: calendar.id }]
+          : [],
+      ),
+    );
+
+    if (calendars.length > MAX_VISIBLE_CALENDARS) {
+      throw new Error('Too many visible Google calendars');
+    }
+
+    nextPageToken = payload.nextPageToken;
+
+    if (!nextPageToken) {
+      return calendars;
+    }
+  }
+
+  throw new Error('Google Calendar returned too many calendar pages');
+}
+
+async function listCalendarEvents(options: {
+  accessToken: string;
+  accountEmail: string;
+  accountId: string;
+  calendar: GoogleCalendarListEntry & { id: string };
+  end: Date;
+  now: Date;
+  timeZone: string;
+}): Promise<CalendarEvent[]> {
+  const { accessToken, accountEmail, accountId, calendar, end, now, timeZone } = options;
+  const params = new URLSearchParams({
+    singleEvents: 'true',
+    orderBy: 'startTime',
+    maxResults: '250',
+    timeMin: now.toISOString(),
+    timeMax: end.toISOString(),
+    timeZone,
+  });
+  const events: CalendarEvent[] = [];
+  const calendarKey = calendar.primary ? null : await shortHash(calendar.id);
+  const calendarName = (
+    calendar.summaryOverride ??
+    calendar.summary ??
+    (calendar.primary ? 'Primary' : 'Calendar')
+  ).slice(0, 80);
+  let nextPageToken: string | undefined;
+
+  for (let page = 0; page < MAX_EVENT_PAGES; page += 1) {
+    if (nextPageToken) {
+      params.set('pageToken', nextPageToken);
+    } else {
+      params.delete('pageToken');
+    }
+
+    const response = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendar.id)}/events?${params.toString()}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } },
+    );
+    const payload = (await response.json()) as GoogleEventsResponse;
+
+    if (!response.ok) {
+      throw new Error('Unable to sync Google Calendar');
+    }
+
+    events.push(
+      ...(payload.items ?? []).flatMap((event) => {
+        const date = event.start?.date ?? event.start?.dateTime?.slice(0, 10);
+
+        if (!event.id || !date) {
+          return [];
+        }
+
+        return [
+          {
+            id: calendarKey
+              ? `${accountId}:${calendarKey}:${event.id}`
+              : `${accountId}:${event.id}`,
+            name: (event.summary ?? 'Untitled event').slice(0, 50),
+            date,
+            accountEmail,
+            calendarName,
+          },
+        ];
+      }),
+    );
+
+    nextPageToken = payload.nextPageToken;
+
+    if (!nextPageToken) {
+      return events;
+    }
+  }
+
+  throw new Error('Google Calendar returned too many event pages');
+}
+
+async function shortHash(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+
+  return [...new Uint8Array(digest)]
+    .slice(0, 8)
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 export function isGoogleConfigured(): boolean {
@@ -179,7 +312,15 @@ async function refreshAccessToken(encryptedRefreshToken: string): Promise<string
   const tokens = (await response.json()) as GoogleTokenResponse;
 
   if (!response.ok || !tokens.access_token) {
-    throw new Error(tokens.error_description ?? 'Unable to refresh Google access');
+    if (
+      response.status === 400 ||
+      response.status === 401 ||
+      tokens.error === 'invalid_grant'
+    ) {
+      throw new Error('Google account must be reconnected');
+    }
+
+    throw new Error('Unable to refresh Google access');
   }
 
   return tokens.access_token;

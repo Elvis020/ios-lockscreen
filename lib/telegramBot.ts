@@ -1,4 +1,4 @@
-import { syncGoogleEvents } from './calendar/service';
+import { syncGoogleEvents, type GoogleSyncResult } from './calendar/service';
 import {
   isEventCount,
   isLockScreenProfile,
@@ -1846,16 +1846,11 @@ async function runLinkedTelegramCommand(
   }
 
   if (command === '/sync') {
-    const count = await syncGoogleEvents(token, completion);
+    const result = await syncGoogleEvents(token, completion);
 
     return {
-      reply: htmlReply(
-        [
-          '✓ <b>Google Calendar synced</b>',
-          `${count} cached event${count === 1 ? '' : 's'}.`,
-        ].join('\n'),
-      ),
-      completionCommitted: Boolean(completion),
+      reply: googleSyncReply(result, origin),
+      completionCommitted: Boolean(completion) && result.status !== 'not_connected',
     };
   }
 
@@ -2157,6 +2152,71 @@ function selectedGoogleEvents(user: UserData): UserData['cachedCalEvents'] {
   });
 }
 
+function googleSyncReply(result: GoogleSyncResult, origin: string): TelegramReply {
+  const dashboardUrl = `${calendarOrigin(origin)}/app`;
+  const button = (text: string): TelegramInlineKeyboardMarkup => ({
+    inline_keyboard: [[{ text, url: dashboardUrl }]],
+  });
+
+  if (result.status === 'not_connected') {
+    return htmlReply(
+      [
+        '<b>Google Calendar is not connected</b>',
+        'Connect it from the web dashboard, then sync again.',
+      ].join('\n'),
+      button('Connect Google Calendar'),
+    );
+  }
+
+  if (result.status === 'no_calendars') {
+    return htmlReply(
+      [
+        '<b>No visible Google calendars found</b>',
+        'Show at least one calendar in Google Calendar, or reconnect the account.',
+      ].join('\n'),
+      button('Open dashboard'),
+    );
+  }
+
+  if (result.status === 'empty_window') {
+    return htmlReply(
+      [
+        '✓ <b>Google Calendar checked</b>',
+        `No upcoming events from <b>${escapeTelegramHtml(result.windowStart)}</b> to <b>${escapeTelegramHtml(result.windowEnd)}</b>.`,
+        `${result.calendarCount} visible calendar${result.calendarCount === 1 ? '' : 's'} checked.`,
+      ].join('\n'),
+      button('Open dashboard'),
+    );
+  }
+
+  if (result.status === 'needs_selection') {
+    return htmlReply(
+      [
+        '✓ <b>Google Calendar synced</b>',
+        `${result.fetchedEventCount} upcoming event${result.fetchedEventCount === 1 ? '' : 's'} found across ${result.calendarCount} calendar${result.calendarCount === 1 ? '' : 's'}.`,
+        'Choose which events should appear on your wallpaper.',
+      ].join('\n'),
+      button('Choose events'),
+    );
+  }
+
+  const upcoming = result.upcomingTrackedEvents.map(
+    ({ date, name }) =>
+      `• <b>${escapeTelegramHtml(formatTelegramEventDate(date))}</b> · ${escapeTelegramHtml(name)}`,
+  );
+
+  return htmlReply(
+    [
+      '✓ <b>Google Calendar synced</b>',
+      `${result.fetchedEventCount} found · ${result.trackedEventCount} tracked`,
+      ...(upcoming.length ? ['', '<b>Next on your wallpaper</b>', ...upcoming] : []),
+      '',
+      WALLPAPER_REFRESH_NOTE,
+    ].join('\n'),
+    button('Open dashboard'),
+  );
+}
+
 function helpText(): string {
   return [
     '<b>Calendar Lockscreen</b>',
@@ -2388,6 +2448,21 @@ function expectedCommandErrorReply(message: string): TelegramReply | null {
       [
         '<b>Google Calendar needs attention</b>',
         'Reconnect your Google account from the web dashboard, then try again.',
+      ].join('\n'),
+    );
+  }
+
+  if (
+    message === 'Unable to list Google calendars' ||
+    message === 'Unable to sync Google Calendar' ||
+    message === 'Too many visible Google calendars' ||
+    message === 'Google Calendar returned too many calendar pages' ||
+    message === 'Google Calendar returned too many event pages'
+  ) {
+    return htmlReply(
+      [
+        '<b>Google Calendar could not finish syncing</b>',
+        'Check which calendars are visible in Google Calendar, then try <code>/sync</code> again.',
       ].join('\n'),
     );
   }

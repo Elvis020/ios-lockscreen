@@ -16,9 +16,9 @@ export default async function handler(req: Request) {
 
   try {
     if (req.method === 'POST') {
-      const count = await syncGoogleEvents(token);
+      const sync = await syncGoogleEvents(token);
 
-      return jsonResponse({ success: true, count });
+      return jsonResponse({ success: true, count: sync.fetchedEventCount, sync });
     }
 
     if (req.method === 'PATCH') {

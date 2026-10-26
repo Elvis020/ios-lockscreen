@@ -32,9 +32,15 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 ## How syncing works
 
 - The app requests read-only calendar access.
-- Paginated Google results are normalized and cached in Redis.
+- A sync first reads Google Calendar's visible calendar list, then fetches the primary
+  calendar and every other calendar marked as selected there.
+- Paginated results from each calendar are normalized, labeled with their calendar name,
+  merged, sorted, and cached in Redis. Sync is bounded to twenty visible calendars and a
+  one-year upcoming window.
 - Only events selected in the dashboard appear on the wallpaper.
-- `/sync` refreshes the cache from Telegram.
+- `/sync` refreshes the cache from Telegram and reports the useful outcome rather than
+  only a raw cache count. If events were found but none are tracked, its **Choose events**
+  button opens the dashboard.
 - Refresh tokens are encrypted before storage.
 - OAuth state expires after ten minutes and is bound to the initiating browser session.
 - Stale sync results cannot overwrite a newly connected Google account.

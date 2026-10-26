@@ -12,6 +12,13 @@ export interface ConnectedGoogleAccount {
   encryptedRefreshToken: string;
 }
 
+export interface CalendarSyncBatch {
+  calendarCount: number;
+  events: CalendarEvent[];
+  windowEnd: string;
+  windowStart: string;
+}
+
 export interface CalendarProvider {
   createAuthorizationUrl(state: string, codeChallenge: string): string;
   exchangeCode(code: string, codeVerifier: string): Promise<ConnectedGoogleAccount>;
@@ -20,5 +27,5 @@ export interface CalendarProvider {
     accountId: string,
     accountEmail: string,
     timeZone: string,
-  ): Promise<CalendarEvent[]>;
+  ): Promise<CalendarSyncBatch>;
 }

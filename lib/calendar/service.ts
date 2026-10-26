@@ -13,6 +13,20 @@ import type { OAuthState } from './types';
 
 const provider = new GoogleCalendarProvider();
 
+export type GoogleSyncStatus =
+  'not_connected' | 'no_calendars' | 'empty_window' | 'needs_selection' | 'ready';
+
+export interface GoogleSyncResult {
+  accountCount: number;
+  calendarCount: number;
+  fetchedEventCount: number;
+  status: GoogleSyncStatus;
+  trackedEventCount: number;
+  upcomingTrackedEvents: Array<{ date: string; name: string }>;
+  windowEnd: string;
+  windowStart: string;
+}
+
 export async function createGoogleAuthorization(
   token: string,
   returnOrigin: string,
@@ -82,14 +96,35 @@ export async function completeGoogleAuthorization(
 export async function syncGoogleEvents(
   token: string,
   completion?: MutationCompletion,
-): Promise<number> {
+): Promise<GoogleSyncResult> {
   const user = await getUser(token);
 
   if (!user) {
     throw new Error('Invalid management token');
   }
 
+  const now = new Date();
+  const end = new Date(now);
+
+  end.setUTCFullYear(end.getUTCFullYear() + 1);
+  const windowStart = now.toISOString().slice(0, 10);
+  const windowEnd = end.toISOString().slice(0, 10);
+
+  if (!user.googleAccounts.length) {
+    return {
+      accountCount: 0,
+      calendarCount: 0,
+      fetchedEventCount: 0,
+      status: 'not_connected',
+      trackedEventCount: 0,
+      upcomingTrackedEvents: [],
+      windowEnd,
+      windowStart,
+    };
+  }
+
   const events = [];
+  let calendarCount = 0;
   const accountRevision = googleAccountRevision(user.googleAccounts);
 
   for (const account of user.googleAccounts) {
@@ -97,19 +132,55 @@ export async function syncGoogleEvents(
       throw new Error('Google account must be reconnected');
     }
 
-    events.push(
-      ...(await provider.listEvents(
-        account.encryptedRefreshToken,
-        account.id,
-        account.email,
-        user.timeZone,
-      )),
+    const batch = await provider.listEvents(
+      account.encryptedRefreshToken,
+      account.id,
+      account.email,
+      user.timeZone,
     );
+
+    calendarCount += batch.calendarCount;
+    events.push(...batch.events);
   }
 
   await updateCachedCalEvents(token, events, accountRevision, completion);
 
-  return events.length;
+  const updated = await getUser(token);
+
+  if (!updated) {
+    throw new Error('Invalid management token');
+  }
+
+  const cached = new Map(updated.cachedCalEvents.map((event) => [event.id, event]));
+  const tracked = updated.selectedEventIds.flatMap((id) => {
+    const event = cached.get(id);
+
+    return event ? [event] : [];
+  });
+  const status: GoogleSyncStatus = !calendarCount
+    ? 'no_calendars'
+    : !events.length
+      ? 'empty_window'
+      : !tracked.length
+        ? 'needs_selection'
+        : 'ready';
+
+  return {
+    accountCount: updated.googleAccounts.length,
+    calendarCount,
+    fetchedEventCount: events.length,
+    status,
+    trackedEventCount: tracked.length,
+    upcomingTrackedEvents: tracked
+      .sort(
+        (left, right) =>
+          left.date.localeCompare(right.date) || left.name.localeCompare(right.name),
+      )
+      .slice(0, 3)
+      .map(({ date, name }) => ({ date, name })),
+    windowEnd,
+    windowStart,
+  };
 }
 
 export async function disconnectGoogleAccount(
