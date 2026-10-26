@@ -4,7 +4,7 @@ Calendar Lockscreen runs as Vercel Edge functions and uses Redis as the shared s
 
 ## Data flow
 
-1. The dashboard, Telegram bot, or Google sync updates the user's Redis record.
+1. The dashboard, signed Telegram control panel, Telegram bot, or Google sync updates the user's Redis record.
 2. The wallpaper endpoint reads that shared record.
 3. The renderer creates the selected time range and presentation inside a calibrated lock-screen content band.
 4. An iOS Shortcut fetches the image and applies it to the phone.
@@ -18,6 +18,9 @@ The application cannot force iOS to refresh a wallpaper. Run the Shortcut manual
 - Legacy `token` wallpaper URLs remain supported.
 - Management APIs prefer `Authorization: Bearer <management-token>` while retaining query-token compatibility for existing clients.
 - Existing browser storage migrates from `quarterProgressToken` to `calendarLockscreenManagementToken`.
+- A Telegram-first user is provisioned idempotently from the verified private-chat identity.
+  Its management token and wallpaper key remain server-side; the Telegram control panel
+  uses signed launch data instead of exposing either credential.
 
 ## Concurrency and compatibility
 
@@ -40,6 +43,18 @@ Per-user mutations use short-lived owner locks with atomic commit-time lease fen
 - Google refresh tokens are encrypted with AES-GCM before Redis storage.
 - OAuth state uses a short-lived, secure, HttpOnly, SameSite cookie.
 - Telegram link codes and OAuth state expire after ten minutes.
+- Control-panel requests authorize with verified, fresh Telegram init data or the
+  short-lived OAuth continuation session; either path revalidates the current
+  Telegram-to-account mapping. Mutations have short per-user, per-action rate limits.
+  The live preview uses an authenticated POST and private, no-store caching rather than
+  placing a wallpaper credential in the page or URL.
+- Starting Google OAuth from Telegram creates a one-time, ten-minute Redis launch record
+  and returns a same-origin handoff URL whose random capability is fragment-only. The
+  Mini App opens that URL externally; its no-store handoff page posts the fragment back
+  same-origin, atomically consumes the launch, then sets the Google browser nonce and
+  opaque Telegram continuation-session cookies in the external browser before navigating
+  to the stored Google authorization URL. The capability is never present in request URLs,
+  server-rendered HTML, logs, or referrers, and a replay is rejected.
 - Telegram event drafts and edit-menu snapshots expire after fifteen minutes. Edit-menu
   callbacks carry an opaque menu token plus a bounded slot, never an event ID; consuming
   a menu creates one draft atomically and invalidates prior menu buttons. The Mini App
@@ -51,6 +66,12 @@ Per-user mutations use short-lived owner locks with atomic commit-time lease fen
 - Personalized wallpaper responses are private and not cached.
 - The public fallback wallpaper may use a one-hour CDN cache.
 - Errors returned to clients avoid exposing internal details.
+
+Google sync discovers the primary calendar and other visible calendars through Google's
+CalendarList API before fetching events. Secondary-calendar event IDs are namespaced with
+a one-way calendar hash so identical provider event IDs cannot collide and raw calendar
+IDs are not added to the app's stored event IDs. Provider pagination and calendar counts
+are bounded; revoked refresh access returns a reconnect instruction.
 
 The temporary invite-admin endpoint remains available for initial setup. Keep `ADMIN_INVITE_SECRET` private and remove the endpoint when setup is complete.
 

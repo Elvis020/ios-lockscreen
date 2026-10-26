@@ -1,5 +1,7 @@
 export const GOOGLE_OAUTH_COOKIE = 'calendar_google_oauth';
 export const GOOGLE_OAUTH_MAX_AGE_SECONDS = 600;
+export const TELEGRAM_APP_SESSION_COOKIE = 'calendar_telegram_app';
+export const TELEGRAM_APP_SESSION_SECONDS = 600;
 
 export function createGoogleBrowserNonce(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -47,6 +49,10 @@ export function readCookie(request: Request, name: string): string | null {
 
 export function googleOAuthCookie(nonce: string): string {
   return `${GOOGLE_OAUTH_COOKIE}=${nonce}; Path=/api/google/callback; HttpOnly; Secure; SameSite=Lax; Max-Age=${GOOGLE_OAUTH_MAX_AGE_SECONDS}`;
+}
+
+export function telegramAppSessionCookie(sessionId: string): string {
+  return `${TELEGRAM_APP_SESSION_COOKIE}=${sessionId}; Path=/api/telegram/app; HttpOnly; Secure; SameSite=Lax; Max-Age=${TELEGRAM_APP_SESSION_SECONDS}`;
 }
 
 export function clearGoogleOAuthCookie(): string {

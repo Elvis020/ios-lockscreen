@@ -37,12 +37,19 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 - Paginated results from each calendar are normalized, labeled with their calendar name,
   merged, sorted, and cached in Redis. Sync is bounded to twenty visible calendars and a
   one-year upcoming window.
-- Only events selected in the dashboard appear on the wallpaper.
+- Only events selected in the web dashboard or Telegram control panel appear on the
+  wallpaper.
 - `/sync` refreshes the cache from Telegram and reports the useful outcome rather than
   only a raw cache count. If events were found but none are tracked, its **Choose events**
-  button opens the dashboard.
+  button opens the signed control panel.
 - Refresh tokens are encrypted before storage.
 - OAuth state expires after ten minutes and is bound to the initiating browser session.
+- When Google OAuth starts from the Telegram control panel, the app opens a same-origin
+  external-browser handoff. Its one-time capability stays in the URL fragment, is consumed
+  by a no-store same-origin POST, and then establishes the browser-bound OAuth and Telegram
+  continuation cookies before navigating to Google's stored authorization URL.
+- OAuth success and failure return to the surface that started the connection, including
+  the Telegram control panel.
 - Stale sync results cannot overwrite a newly connected Google account.
 
 Google push notification channels are intentionally out of scope. Without valid Google credentials, the rest of the dashboard remains available and the Google connection controls are disabled.

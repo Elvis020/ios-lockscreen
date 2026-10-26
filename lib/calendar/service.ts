@@ -27,6 +27,16 @@ export interface GoogleSyncResult {
   windowStart: string;
 }
 
+export class GoogleAuthorizationError extends Error {
+  constructor(
+    message: string,
+    readonly returnOrigin: string,
+  ) {
+    super(message);
+    this.name = 'GoogleAuthorizationError';
+  }
+}
+
 export async function createGoogleAuthorization(
   token: string,
   returnOrigin: string,
@@ -57,6 +67,40 @@ export async function completeGoogleAuthorization(
   code: string,
   browserNonce: string,
 ): Promise<string> {
+  const oauthState = await consumeGoogleAuthorizationState(state, browserNonce);
+
+  try {
+    const connected = await provider.exchangeCode(code, oauthState.codeVerifier);
+
+    await addGoogleAccount(oauthState.token, {
+      id: crypto.randomUUID(),
+      email: connected.email,
+      encryptedRefreshToken: connected.encryptedRefreshToken,
+      connectedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    throw new GoogleAuthorizationError(
+      error instanceof Error ? error.message : 'Google authorization failed',
+      oauthState.returnOrigin,
+    );
+  }
+
+  return oauthState.returnOrigin;
+}
+
+export async function cancelGoogleAuthorization(
+  state: string,
+  browserNonce: string,
+): Promise<string> {
+  const oauthState = await consumeGoogleAuthorizationState(state, browserNonce);
+
+  return oauthState.returnOrigin;
+}
+
+async function consumeGoogleAuthorizationState(
+  state: string,
+  browserNonce: string,
+): Promise<OAuthState> {
   const redis = getRedis();
   const stateKey = `oauth:google:state:${state}`;
   const candidate = await redis.get<OAuthState>(stateKey);
@@ -81,16 +125,7 @@ export async function completeGoogleAuthorization(
     throw new Error('Google authorization expired or is invalid');
   }
 
-  const connected = await provider.exchangeCode(code, oauthState.codeVerifier);
-
-  await addGoogleAccount(oauthState.token, {
-    id: crypto.randomUUID(),
-    email: connected.email,
-    encryptedRefreshToken: connected.encryptedRefreshToken,
-    connectedAt: new Date().toISOString(),
-  });
-
-  return oauthState.returnOrigin;
+  return oauthState;
 }
 
 export async function syncGoogleEvents(

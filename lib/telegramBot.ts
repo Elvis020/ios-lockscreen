@@ -24,6 +24,7 @@ import {
   ensureWallpaperKey,
   getUser,
   linkTelegramIdentity,
+  provisionTelegramAccount,
   updatePreferences,
   saveTelegramDraftEvent,
   saveTelegramEditDraft,
@@ -78,7 +79,7 @@ export interface TelegramUpdate {
   message?: {
     text?: string;
     chat?: { id?: number; type?: string };
-    from?: { id?: number; username?: string };
+    from?: { id?: number; username?: string; first_name?: string };
   };
   callback_query?: {
     id?: string;
@@ -148,17 +149,34 @@ export async function processTelegramUpdate(
 
   try {
     if (command === '/start') {
-      await linkChat(userId, chatId, args[0], update.message?.from?.username, completion);
-      await sendTelegramReply(
-        chatId,
-        htmlReply(
-          [
-            '✓ <b>Telegram linked</b>',
-            'Use <code>/help</code> to manage your wallpaper.',
-            WALLPAPER_REFRESH_NOTE,
-          ].join('\n'),
-        ),
-      );
+      const setup = !args[0] || args[0].toLowerCase() === 'setup';
+      let created = false;
+
+      if (setup) {
+        const result = await provisionTelegramAccount(
+          {
+            userId,
+            chatId,
+            username: update.message?.from?.username,
+            linkedAt: new Date().toISOString(),
+          },
+          update.message?.from?.first_name ?? update.message?.from?.username ?? 'You',
+          'UTC',
+          completion,
+        );
+
+        created = result.created;
+      } else {
+        await linkChat(
+          userId,
+          chatId,
+          args[0],
+          update.message?.from?.username,
+          completion,
+        );
+      }
+
+      await sendTelegramReply(chatId, onboardingReply(origin, created));
 
       return { completionCommitted: Boolean(completion) };
     }
@@ -1046,6 +1064,10 @@ async function runLinkedTelegramCommand(
 ): Promise<LinkedCommandResult> {
   if (command === '/help') {
     return { reply: htmlReply(helpText()), completionCommitted: false };
+  }
+
+  if (command === '/app') {
+    return { reply: onboardingReply(origin, false), completionCommitted: false };
   }
 
   if (command === '/status' || command === '/url') {
@@ -2152,17 +2174,38 @@ function selectedGoogleEvents(user: UserData): UserData['cachedCalEvents'] {
   });
 }
 
+function onboardingReply(origin: string, created: boolean): TelegramReply {
+  return htmlReply(
+    [
+      created ? '✓ <b>Your wallpaper is ready to shape</b>' : '<b>Welcome back</b>',
+      created
+        ? 'Start with a live preview, then add one important date or connect Google Calendar.'
+        : 'Open your control panel to preview or change the wallpaper.',
+    ].join('\n'),
+    {
+      inline_keyboard: [
+        [
+          {
+            text: 'Open Calendar Lockscreen',
+            web_app: { url: `${calendarOrigin(origin)}/api/telegram/app` },
+          },
+        ],
+      ],
+    },
+  );
+}
+
 function googleSyncReply(result: GoogleSyncResult, origin: string): TelegramReply {
-  const dashboardUrl = `${calendarOrigin(origin)}/app`;
+  const appUrl = `${calendarOrigin(origin)}/api/telegram/app`;
   const button = (text: string): TelegramInlineKeyboardMarkup => ({
-    inline_keyboard: [[{ text, url: dashboardUrl }]],
+    inline_keyboard: [[{ text, web_app: { url: appUrl } }]],
   });
 
   if (result.status === 'not_connected') {
     return htmlReply(
       [
         '<b>Google Calendar is not connected</b>',
-        'Connect it from the web dashboard, then sync again.',
+        'Connect it from the control panel, then sync again.',
       ].join('\n'),
       button('Connect Google Calendar'),
     );
@@ -2174,7 +2217,7 @@ function googleSyncReply(result: GoogleSyncResult, origin: string): TelegramRepl
         '<b>No visible Google calendars found</b>',
         'Show at least one calendar in Google Calendar, or reconnect the account.',
       ].join('\n'),
-      button('Open dashboard'),
+      button('Open control panel'),
     );
   }
 
@@ -2185,7 +2228,7 @@ function googleSyncReply(result: GoogleSyncResult, origin: string): TelegramRepl
         `No upcoming events from <b>${escapeTelegramHtml(result.windowStart)}</b> to <b>${escapeTelegramHtml(result.windowEnd)}</b>.`,
         `${result.calendarCount} visible calendar${result.calendarCount === 1 ? '' : 's'} checked.`,
       ].join('\n'),
-      button('Open dashboard'),
+      button('Open control panel'),
     );
   }
 
@@ -2213,7 +2256,7 @@ function googleSyncReply(result: GoogleSyncResult, origin: string): TelegramRepl
       '',
       WALLPAPER_REFRESH_NOTE,
     ].join('\n'),
-    button('Open dashboard'),
+    button('Open control panel'),
   );
 }
 
@@ -2222,6 +2265,7 @@ function helpText(): string {
     '<b>Calendar Lockscreen</b>',
     '',
     '<b>Wallpaper</b>',
+    '<code>/app</code>  Open the visual control panel',
     '<code>/status</code>  Current setup',
     '<code>/url</code>  Copy wallpaper URL',
     '',
@@ -2361,7 +2405,7 @@ function unlinkedReply(): TelegramReply {
   return htmlReply(
     [
       '<b>Telegram isn’t linked</b>',
-      'Open the web dashboard and link Telegram to continue.',
+      'Send <code>/start</code> to create or reconnect your wallpaper.',
     ].join('\n'),
   );
 }
@@ -2447,7 +2491,7 @@ function expectedCommandErrorReply(message: string): TelegramReply | null {
     return htmlReply(
       [
         '<b>Google Calendar needs attention</b>',
-        'Reconnect your Google account from the web dashboard, then try again.',
+        'Reconnect your Google account from the control panel, then try again.',
       ].join('\n'),
     );
   }

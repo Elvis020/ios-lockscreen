@@ -41,6 +41,7 @@ describe('Telegram command setup', () => {
 
   it('keeps command names valid, unique, and aligned with handlers', () => {
     const expectedCommands = [
+      'app',
       'help',
       'status',
       'url',

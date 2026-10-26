@@ -11,6 +11,7 @@ interface TelegramApiResponse<T> {
 }
 
 export const TELEGRAM_COMMANDS: TelegramCommand[] = [
+  { command: 'app', description: 'Open the visual wallpaper control panel' },
   { command: 'help', description: 'Show command help and usage examples' },
   { command: 'status', description: 'Show settings, event counts, and wallpaper URL' },
   { command: 'url', description: 'Show the current wallpaper URL' },

@@ -47,6 +47,28 @@ describe('Google OAuth browser session', () => {
     expect(await redis.get('oauth:google:state:state-id')).toBeNull();
   });
 
+  it('consumes a nonce-bound OAuth state when Google access is denied', async () => {
+    const { hashGoogleBrowserNonce } = await import('../lib/calendar/oauthSession');
+
+    await redis.set('oauth:google:state:state-id', {
+      token: 'owner',
+      codeVerifier: 'verifier',
+      returnOrigin: 'https://example.com/api/telegram/app',
+      browserNonceHash: await hashGoogleBrowserNonce('right-browser'),
+    });
+    const { cancelGoogleAuthorization } = await import('../lib/calendar/service');
+
+    await expect(cancelGoogleAuthorization('state-id', 'wrong-browser')).rejects.toThrow(
+      'Google authorization browser session is invalid',
+    );
+    expect(await redis.get('oauth:google:state:state-id')).not.toBeNull();
+
+    await expect(cancelGoogleAuthorization('state-id', 'right-browser')).resolves.toBe(
+      'https://example.com/api/telegram/app',
+    );
+    expect(await redis.get('oauth:google:state:state-id')).toBeNull();
+  });
+
   it('sets a short-lived secure HttpOnly cookie when OAuth starts', async () => {
     process.env.GOOGLE_CLIENT_ID = 'client-id';
     process.env.GOOGLE_CLIENT_SECRET = 'client-secret';
@@ -70,6 +92,32 @@ describe('Google OAuth browser session', () => {
     expect(cookie).toContain('Secure');
     expect(cookie).toContain('SameSite=Lax');
     expect(cookie).toContain('Max-Age=600');
+  });
+
+  it('preserves the initiating Telegram return URL when provider exchange fails', async () => {
+    const { hashGoogleBrowserNonce } = await import('../lib/calendar/oauthSession');
+    const { GoogleCalendarProvider } = await import('../lib/calendar/googleProvider');
+
+    vi.spyOn(GoogleCalendarProvider.prototype, 'exchangeCode').mockRejectedValue(
+      new Error('Provider rejected the code'),
+    );
+    await redis.set('user:owner', userRecord());
+    await redis.set('oauth:google:state:state-id', {
+      token: 'owner',
+      codeVerifier: 'verifier',
+      returnOrigin: 'https://example.com/api/telegram/app',
+      browserNonceHash: await hashGoogleBrowserNonce('right-browser'),
+    });
+    const { completeGoogleAuthorization, GoogleAuthorizationError } =
+      await import('../lib/calendar/service');
+
+    const completion = completeGoogleAuthorization('state-id', 'code', 'right-browser');
+
+    await expect(completion).rejects.toBeInstanceOf(GoogleAuthorizationError);
+    await expect(completion).rejects.toMatchObject({
+      message: 'Provider rejected the code',
+      returnOrigin: 'https://example.com/api/telegram/app',
+    });
   });
 });
 

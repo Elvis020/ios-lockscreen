@@ -1,3 +1,5 @@
+import { telegramSetupUrl } from '../lib/telegramUrls';
+
 export const config = {
   runtime: 'edge',
 };
@@ -23,6 +25,8 @@ function buildPreviewUrl(date: Date): string {
 export default function handler() {
   const previewUrl = buildPreviewUrl(new Date());
   const previewAttribute = previewUrl.replaceAll('&', '&amp;');
+  const setupUrl = telegramSetupUrl() ?? '/app';
+  const setupLabel = telegramSetupUrl() ? 'Continue with Telegram' : 'Start your setup';
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -796,15 +800,15 @@ export default function handler() {
           Turn upcoming events and time progress into an iPhone wallpaper. Make changes in the dashboard or Telegram; your Shortcut fetches the latest version.
         </p>
         <div class="hero-actions">
-          <a class="button" href="/app">
-            Start your setup
+          <a class="button" href="${setupUrl}">
+            ${setupLabel}
             <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
               <path d="M3 8h9M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </a>
           <a class="text-link" href="${previewAttribute}" target="_blank" rel="noreferrer">Preview the wallpaper</a>
         </div>
-        <p class="beta-note">Invite code required during beta · iPhone · Telegram required</p>
+        <p class="beta-note">Creates your private setup in Telegram · iPhone required</p>
       </div>
 
       <div class="hero-visual">
@@ -828,13 +832,13 @@ export default function handler() {
       <div class="section-heading">
         <h2 id="how-title">Set it once. Shape it as life changes.</h2>
         <p>
-          The website handles private setup. Telegram becomes the everyday remote. Your iOS Shortcut handles the final handoff to the Lock Screen.
+          Telegram creates your private setup and becomes the everyday remote. Your iOS Shortcut handles the final handoff to the Lock Screen.
         </p>
       </div>
       <ol class="steps">
         <li class="step">
-          <h3>Create or restore</h3>
-          <p>Use an invite to create your account, or restore one with its private management token.</p>
+          <h3>Continue in Telegram</h3>
+          <p>Tap Start once. Your private wallpaper is created without an invite code or password.</p>
         </li>
         <li class="step">
           <h3>Make it yours</h3>
@@ -854,8 +858,8 @@ export default function handler() {
         <p>
           Add an event, change the layout, or switch the entire mood without returning to a settings maze. The next wallpaper refresh carries the change to your phone.
         </p>
-        <a class="button" href="/app">
-          Connect from dashboard
+        <a class="button" href="${setupUrl}">
+          ${setupLabel}
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M3 8h9M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -864,7 +868,7 @@ export default function handler() {
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M5.5 7V5.25a2.5 2.5 0 0 1 5 0V7M4 7h8v6H4V7Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
-          Linking begins inside your authenticated dashboard. The Telegram link is single-use and expires after ten minutes.
+          Telegram verifies your identity. Private wallpaper credentials stay out of the chat and preview URL.
         </p>
       </div>
 
@@ -901,9 +905,9 @@ export default function handler() {
       <div class="final-cta-inner">
         <p class="eyebrow">Built for the glance</p>
         <h2 id="final-title">Know what is coming without opening another app.</h2>
-        <p>Start with the invite-only beta. Your dashboard will guide the private account and Telegram connection.</p>
-        <a class="button" href="/app">
-          Open the dashboard
+        <p>Start in Telegram, see your private preview, and add one date. Fine-tune the rest later.</p>
+        <a class="button" href="${setupUrl}">
+          ${setupLabel}
           <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path d="M3 8h9M9 4l4 4-4 4" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>

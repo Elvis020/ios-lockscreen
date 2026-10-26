@@ -45,8 +45,39 @@ export interface MutationCompletion {
   ttlSeconds: number;
 }
 
+export interface TelegramProvisioningResult {
+  created: boolean;
+  user: UserData;
+}
+
 function generateUUID(): string {
   return crypto.randomUUID();
+}
+
+function buildNewUserData(
+  token: string,
+  wallpaperKey: string,
+  name: string,
+  timeZone: string,
+): UserData {
+  return {
+    schemaVersion: 5,
+    token,
+    wallpaperKey,
+    name: name.trim().slice(0, 50),
+    theme: 'default',
+    timeRange: 'month',
+    presentation: 'hybrid',
+    lockScreenProfile: 'standard',
+    eventCount: DEFAULT_EVENT_COUNT,
+    timeZone,
+    customThemes: [],
+    events: [],
+    googleAccounts: [],
+    selectedEventIds: [],
+    cachedCalEvents: [],
+    cachedCalAt: 0,
+  };
 }
 
 export async function createUser(
@@ -69,24 +100,7 @@ export async function createUser(
 
     const token = generateUUID();
     const wallpaperKey = generateUUID();
-    const userData: UserData = {
-      schemaVersion: 5,
-      token,
-      wallpaperKey,
-      name: name.trim(),
-      theme: 'default',
-      timeRange: 'month',
-      presentation: 'hybrid',
-      lockScreenProfile: 'standard',
-      eventCount: DEFAULT_EVENT_COUNT,
-      timeZone,
-      customThemes: [],
-      events: [],
-      googleAccounts: [],
-      selectedEventIds: [],
-      cachedCalEvents: [],
-      cachedCalAt: 0,
-    };
+    const userData = buildNewUserData(token, wallpaperKey, name, timeZone);
 
     invite.usedBy.push(token);
 
@@ -101,6 +115,79 @@ export async function createUser(
     );
 
     return { token, wallpaperKey };
+  });
+}
+
+export async function provisionTelegramAccount(
+  telegram: TelegramLink & { userId: string },
+  name: string,
+  timeZone = 'UTC',
+  completion?: MutationCompletion,
+): Promise<TelegramProvisioningResult> {
+  const redis = getRedis();
+
+  return withRedisLock(redis, 'telegram:links', async (telegramLease) => {
+    const mappingKey = `telegram:user:${telegram.userId}`;
+    const mappedToken = await redis.get<string>(mappingKey);
+
+    if (mappedToken) {
+      const existing = await withRedisLock(
+        redis,
+        `user:${mappedToken}`,
+        async (userLease) => {
+          const user = await readUser(redis, mappedToken);
+
+          if (!user?.telegram || user.telegram.userId !== telegram.userId) {
+            return null;
+          }
+
+          user.telegram = telegram;
+          const sets: RedisFencedSet[] = [
+            { key: `user:${mappedToken}`, value: user },
+            { key: mappingKey, value: mappedToken },
+          ];
+
+          if (completion) {
+            sets.push({
+              key: completion.key,
+              value: 'done',
+              ttlSeconds: completion.ttlSeconds,
+            });
+          }
+
+          await commitIfLeasesOwned(redis, [telegramLease, userLease], sets);
+
+          return user;
+        },
+      );
+
+      if (existing) {
+        return { created: false, user: existing };
+      }
+    }
+
+    const token = generateUUID();
+    const wallpaperKey = generateUUID();
+    const user = buildNewUserData(token, wallpaperKey, name, timeZone);
+
+    user.telegram = telegram;
+    const sets: RedisFencedSet[] = [
+      { key: `user:${token}`, value: user },
+      { key: `wallpaper:${wallpaperKey}`, value: token },
+      { key: mappingKey, value: token },
+    ];
+
+    if (completion) {
+      sets.push({
+        key: completion.key,
+        value: 'done',
+        ttlSeconds: completion.ttlSeconds,
+      });
+    }
+
+    await commitIfLeasesOwned(redis, [telegramLease], sets);
+
+    return { created: true, user };
   });
 }
 

@@ -1,6 +1,6 @@
 # Telegram bot setup
 
-The Telegram bot can link an existing Calendar Lockscreen account, manage events, choose presets or independent wallpaper dimensions, change themes, and refresh Google Calendar data.
+The Telegram bot is the main entry point for Calendar Lockscreen. It can create or resume an account, open the visual control panel, manage events, choose presets or independent wallpaper dimensions, change themes, and refresh Google Calendar data.
 
 ## 1. Create the bot
 
@@ -37,6 +37,13 @@ Pass the same webhook secret as Telegram's `secret_token`. Telegram will return 
 
 The repository does not create or change Telegram webhooks automatically.
 
+## Deployment URLs
+
+Set `PUBLIC_APP_ORIGIN` in Vercel to the canonical deployed HTTPS origin. When it is
+unset, the app falls back to Vercel's `VERCEL_PROJECT_PRODUCTION_URL`. Set
+`PUBLIC_SHORTCUT_INSTALL_URL` to the public iCloud share link created after publishing
+and testing a stable Shortcut; Vercel does not generate that link.
+
 ## Commands
 
 Register the command menu once after creating the bot:
@@ -50,6 +57,7 @@ This command requires Node.js 22.18 or newer. The script reads `TELEGRAM_BOT_TOK
 Typing `/` in the bot chat will then show autocomplete for:
 
 ```text
+/app
 /help
 /status
 /url
@@ -84,6 +92,20 @@ Typing `/` in the bot chat will then show autocomplete for:
 /unshare NUMBER
 /sync
 ```
+
+`/start` creates a private Calendar Lockscreen account when the Telegram identity has
+not been seen before. Repeating `/start` resumes that same account instead of creating
+duplicates. Existing dashboard link codes remain supported as `/start LINK_CODE` for
+legacy accounts.
+
+`/app` opens the signed Telegram control panel. It provides a private live preview,
+manual event entry, Google Calendar connection and event selection, appearance controls,
+and the iPhone Shortcut installer when `PUBLIC_SHORTCUT_INSTALL_URL` is configured. The
+panel verifies fresh Telegram launch data on requests, or uses the short-lived OAuth
+continuation session after Google redirects back; both paths revalidate the Telegram
+account mapping and never send a management token or wallpaper key to the browser. Google
+authorization is opened in the external browser through a one-time fragment-only handoff,
+not inside Telegram's embedded WebView.
 
 `/status` shows the current wallpaper setup and includes one **Open wallpaper**
 button for quick access. The URL stays out of the status summary so it remains easy to
@@ -133,20 +155,30 @@ explicit mood and custom-color forms remain available for people who prefer type
 Year uses a continuous twenty-two-column dot field with event timers; older saved
 Year/progress settings render the same way.
 
-Run `npm run telegram:configure-commands` again after deploying this update to add
-`/eventcount` and `/edit` to Telegram's autocomplete menu. This does not alter the webhook.
+`/sync` now checks the primary calendar and other calendars currently visible in Google
+Calendar. Its reply distinguishes an unconnected account, no visible calendars, an empty
+one-year window, events waiting to be selected, and a ready wallpaper. A successful ready
+reply shows the next three tracked events; the button opens the control panel when a
+selection or reconnection is needed.
 
-`/start` is intentionally omitted from autocomplete because it is only used by the dashboard's single-use account-link URL.
+Run `npm run telegram:configure-commands` again after deploying this update to add
+`/app` to Telegram's autocomplete menu. This does not alter the webhook or BotFather's
+separate menu-button configuration.
+
+`/start` stays out of autocomplete because Telegram presents it automatically when a user
+opens the bot for the first time.
 
 Custom theme names must begin with a letter and may contain lowercase letters, numbers, or hyphens. Every color must use the `#RRGGBB` format. Each account may save up to five custom themes.
 
 ## Linking and safety
 
 - Bot commands work only in private chats.
-- Link codes are single-use and expire after ten minutes.
+- New Telegram-first accounts do not require a link code.
+- Legacy dashboard link codes remain single-use and expire after ten minutes.
 - Relinking revokes the previous Telegram identity.
 - Telegram retries are handled idempotently.
 - Authorization is tied to the Telegram user ID rather than a shared chat.
+- Control-panel writes have short per-user rate limits and private, no-store responses.
 - The date-picker Mini App validates Telegram's signed launch data on the server,
   checks its age, and matches the verified identity to the active linked draft.
 

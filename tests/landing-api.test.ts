@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import handler from '../api/landing';
+
+const originalEnvironment = { ...process.env };
+
+afterEach(() => {
+  process.env = { ...originalEnvironment };
+});
 
 describe('landing page', () => {
   it('renders a public product page with truthful setup guidance', async () => {
@@ -12,11 +18,21 @@ describe('landing page', () => {
     expect(html).toContain('<title>Calendar Lockscreen');
     expect(html).toContain('Your calendar, visible before you unlock.');
     expect(html).toContain('href="/app"');
-    expect(html).toContain('Invite code required during beta');
+    expect(html).toContain('Creates your private setup in Telegram');
     expect(html).toContain('iOS Shortcut');
     expect(html).toContain('/api/wallpaper?preset=hybrid');
     expect(html).toContain('preview=ios');
     expect(html).toContain('Simulated Lock Screen');
+  });
+
+  it('routes the primary setup action directly into Telegram when configured', async () => {
+    process.env.TELEGRAM_BOT_USERNAME = '@calendar_lockscreen_bot';
+
+    const html = await handler().text();
+
+    expect(html).toContain('href="https://t.me/calendar_lockscreen_bot?start=setup"');
+    expect(html).toContain('Continue with Telegram');
+    expect(html).not.toContain('Invite code required');
   });
 
   it('does not expose dashboard credentials or a broken public Telegram link', async () => {

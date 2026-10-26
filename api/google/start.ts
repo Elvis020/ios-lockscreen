@@ -23,9 +23,10 @@ export default async function handler(req: Request) {
 
   try {
     const browserNonce = createGoogleBrowserNonce();
+    const origin = new URL(req.url).origin;
     const authorizationUrl = await createGoogleAuthorization(
       token,
-      new URL(req.url).origin,
+      `${origin}/app`,
       browserNonce,
     );
     const response = jsonResponse({ authorizationUrl });

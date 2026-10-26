@@ -1,8 +1,12 @@
+import { telegramSetupUrl } from '../lib/telegramUrls';
+
 export const config = {
   runtime: 'edge',
 };
 
 export default function handler() {
+  const telegramUrl = telegramSetupUrl();
+  const setupHref = telegramUrl ?? '/';
   const html = `<!doctype html>
 <html lang="en">
 <head>
@@ -148,6 +152,9 @@ export default function handler() {
     }
 
     .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       border: 0;
       border-radius: 8px;
       padding: 12px 15px;
@@ -155,6 +162,7 @@ export default function handler() {
       background: var(--accent);
       font-weight: 700;
       white-space: nowrap;
+      text-decoration: none;
     }
 
     .button.secondary {
@@ -176,6 +184,13 @@ export default function handler() {
 
     .full {
       width: 100%;
+    }
+
+    details summary {
+      min-height: 44px;
+      cursor: pointer;
+      color: var(--text);
+      font-weight: 700;
     }
 
     .event {
@@ -281,21 +296,28 @@ export default function handler() {
 
     <section id="authSection" class="grid">
       <div class="card">
-        <h2>Create your wallpaper</h2>
-        <p class="muted">Use an invite code to create a private management session and a separate read-only wallpaper URL.</p>
-        <div class="row mobile-stack" style="margin-top: 20px;">
-          <input id="nameInput" maxlength="50" placeholder="Your name" autocomplete="name">
-          <input id="inviteInput" placeholder="Invite code" autocomplete="off">
-          <button id="registerButton" class="button" type="button">Register</button>
-        </div>
+        <h2>Continue with Telegram</h2>
+        <p class="muted">Telegram creates your private wallpaper and opens the guided control panel. No invite code or password required.</p>
+        <a class="button full" style="margin-top: 20px;" href="${setupHref}">${telegramUrl ? 'Open Telegram setup' : 'Return to product page'}</a>
       </div>
       <div class="card">
-        <h2>Recover a session</h2>
-        <p class="muted">Paste your management token if this browser lost its saved session. This is not the wallpaper key.</p>
-        <div class="row mobile-stack" style="margin-top: 20px;">
-          <input id="recoveryInput" placeholder="Management token" autocomplete="off">
-          <button id="recoveryButton" class="button secondary" type="button">Restore</button>
-        </div>
+        <details>
+          <summary>Legacy account access</summary>
+          <p class="muted">Restore an older dashboard session with its private management token.</p>
+          <div class="row mobile-stack" style="margin-top: 16px;">
+            <input id="recoveryInput" placeholder="Management token" autocomplete="off">
+            <button id="recoveryButton" class="button secondary" type="button">Restore</button>
+          </div>
+          <details style="margin-top: 18px;">
+            <summary>Use a beta invite</summary>
+            <p class="muted">This compatibility path remains available for previously issued invites.</p>
+            <div class="row mobile-stack" style="margin-top: 16px;">
+              <input id="nameInput" maxlength="50" placeholder="Your name" autocomplete="name">
+              <input id="inviteInput" placeholder="Invite code" autocomplete="off">
+              <button id="registerButton" class="button" type="button">Register</button>
+            </div>
+          </details>
+        </details>
       </div>
     </section>
 
@@ -452,7 +474,7 @@ export default function handler() {
 
       if (response.status === 401) {
         if (isCurrentSession(requestSessionId, requestToken)) {
-          logout('Your management session is invalid. Register again or restore a saved token.');
+          logout('Your management session is invalid. Start again in Telegram or restore a saved token.');
         }
 
         throw new Error(data.error || 'Unauthorized');

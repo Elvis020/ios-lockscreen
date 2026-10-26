@@ -49,6 +49,56 @@ describe('Telegram commands', () => {
     expect(help).toContain('/sync');
   });
 
+  it('provisions Telegram-first setup once and reopens the same account', async () => {
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/start'), 'https://example.com');
+
+    const token = await redis.get<string>('telegram:user:42');
+    const user = token ? await redis.get<UserData>(`user:${token}`) : null;
+
+    expect(token).toBeTruthy();
+    expect(user).toMatchObject({
+      name: 'ada',
+      theme: 'default',
+      timeRange: 'month',
+      presentation: 'hybrid',
+      telegram: { userId: '42', chatId: '42', username: 'ada' },
+    });
+    expect(await redis.get(`wallpaper:${user?.wallpaperKey}`)).toBe(token);
+    expect(deliveryBody(0)).toMatchObject({
+      text: expect.stringContaining('Your wallpaper is ready to shape'),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: 'Open Calendar Lockscreen',
+              web_app: { url: 'https://example.com/api/telegram/app' },
+            },
+          ],
+        ],
+      },
+    });
+
+    fetchMock.mockClear();
+    await processTelegramUpdate(telegramUpdate('/start setup'), 'https://example.com');
+
+    expect(await redis.get('telegram:user:42')).toBe(token);
+    expect(deliveryBody(0).text).toContain('Welcome back');
+  });
+
+  it('opens the visual control panel from the app command', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/app'), 'https://example.com');
+
+    expect(deliveryBody(0).reply_markup.inline_keyboard[0][0]).toEqual({
+      text: 'Open Calendar Lockscreen',
+      web_app: { url: 'https://example.com/api/telegram/app' },
+    });
+  });
+
   it('explains how to connect Google instead of reporting zero cached events', async () => {
     await seedLinkedUser();
     const { processTelegramUpdate } = await import('../lib/telegramBot');
@@ -66,7 +116,7 @@ describe('Telegram commands', () => {
           [
             {
               text: 'Connect Google Calendar',
-              url: 'https://example.com/app',
+              web_app: { url: 'https://example.com/api/telegram/app' },
             },
           ],
         ],
@@ -728,7 +778,7 @@ describe('Telegram commands', () => {
     await processTelegramUpdate(telegramUpdate('/status'), 'https://example.com');
 
     expect(deliveryBody(0)).toMatchObject({
-      text: '<b>Telegram isn’t linked</b>\nOpen the web dashboard and link Telegram to continue.',
+      text: '<b>Telegram isn’t linked</b>\nSend <code>/start</code> to create or reconnect your wallpaper.',
       parse_mode: 'HTML',
     });
   });
