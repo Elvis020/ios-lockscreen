@@ -12,10 +12,13 @@ visible countdown continues changing without rerunning the script every hour.
    [`countdown-widget.js`](../scripts/scriptable/countdown-widget.js).
 3. Run the script inside Scriptable. Paste the existing HTTPS wallpaper URL from the
    bot's `/url` command and tap **Save**.
-4. Edit the iPhone Lock Screen, add a Scriptable widget, choose the rectangular style,
-   and select **Calendar Countdown**. Inline and circular styles show a countdown-only
-   compact fallback.
-5. Leave the existing 12 a.m. wallpaper automation unchanged.
+4. Unlock the iPhone, touch and hold the Lock Screen, then choose **Customize** and
+   **Lock Screen**.
+5. Tap the widget area below the clock, choose **Scriptable**, and add its rectangular
+   widget. Tap the placed widget and select **Calendar Countdown** as the script.
+6. Tap **Done**. The rectangular widget shows the event name on the left and its day
+   label or live timer on the right. Inline and circular styles show only the countdown.
+7. Leave the existing 12 a.m. wallpaper automation unchanged.
 
 Run the script interactively again whenever the wallpaper URL changes. The validated
 countdown endpoint, including its read-only key, is stored in Scriptable Keychain. The

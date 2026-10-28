@@ -69,6 +69,42 @@ function validPayload(data) {
   );
 }
 
+function styleValue(value) {
+  value.font = Font.semiboldSystemFont(13);
+  value.lineLimit = 1;
+  value.minimumScaleFactor = 0.65;
+}
+
+function addCountdownValue(container, event, target, remaining) {
+  if (remaining > 0 && remaining <= 86400000) {
+    const value = container.addDate(target);
+
+    styleValue(value);
+    value.applyTimerStyle();
+
+    return;
+  }
+
+  const value = container.addText(event.countdownLabel);
+
+  styleValue(value);
+}
+
+function addEventRow(widget, event, target, remaining) {
+  const row = widget.addStack();
+
+  row.layoutHorizontally();
+  row.centerAlignContent();
+
+  const name = row.addText(event.name);
+
+  name.font = Font.mediumSystemFont(13);
+  name.lineLimit = 1;
+  name.minimumScaleFactor = 0.55;
+  row.addSpacer();
+  addCountdownValue(row, event, target, remaining);
+}
+
 async function main() {
   const widget = new ListWidget();
 
@@ -111,13 +147,10 @@ async function main() {
         const target = new Date(event.targetAt);
         const remaining = target.getTime() - Date.now();
 
-        if (!['accessoryCircular', 'accessoryInline'].includes(config.widgetFamily)) {
-          widget.addText(event.name);
-        }
-        if (remaining > 0 && remaining <= 86400000) {
-          widget.addDate(target).applyTimerStyle();
+        if (['accessoryCircular', 'accessoryInline'].includes(config.widgetFamily)) {
+          addCountdownValue(widget, event, target, remaining);
         } else {
-          widget.addText(event.countdownLabel);
+          addEventRow(widget, event, target, remaining);
         }
       }
     }

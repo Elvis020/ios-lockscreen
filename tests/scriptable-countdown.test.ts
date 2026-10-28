@@ -21,6 +21,10 @@ async function run(
   const texts: string[] = [];
   const timer = vi.fn();
   const set = vi.fn();
+  const layoutHorizontally = vi.fn();
+  const centerAlignContent = vi.fn();
+  const addSpacer = vi.fn();
+  const addStack = vi.fn();
   const request = vi.fn(function () {
     return {
       loadJSON: async () => {
@@ -30,9 +34,23 @@ async function run(
       },
     };
   });
+  const addText = (text: string) => {
+    texts.push(text);
+
+    return {};
+  };
+  const addDate = () => ({ applyTimerStyle: timer });
+  const stack = {
+    addText,
+    addDate,
+    addSpacer,
+    layoutHorizontally,
+    centerAlignContent,
+  };
   const widget = {
-    addText: (text: string) => texts.push(text),
-    addDate: () => ({ applyTimerStyle: timer }),
+    addText,
+    addDate,
+    addStack: addStack.mockReturnValue(stack),
     presentAccessoryRectangular: async () => {},
   };
   const alert = {
@@ -56,13 +74,26 @@ async function run(
       return alert;
     },
     Request: request,
+    Font: {
+      mediumSystemFont: (size: number) => ({ weight: 'medium', size }),
+      semiboldSystemFont: (size: number) => ({ weight: 'semibold', size }),
+    },
     Keychain: { contains: () => Boolean(options.stored), get: () => options.stored, set },
     Script: { setWidget: () => {}, complete: () => {} },
   };
 
   await runInNewContext(`(async () => { ${source} })()`, context);
 
-  return { texts, timer, set, request };
+  return {
+    texts,
+    timer,
+    set,
+    request,
+    addStack,
+    addSpacer,
+    layoutHorizontally,
+    centerAlignContent,
+  };
 }
 
 describe('Scriptable countdown widget', () => {
@@ -104,6 +135,10 @@ describe('Scriptable countdown widget', () => {
 
     expect(imminent.timer).toHaveBeenCalled();
     expect(imminent.texts).toContain('Launch');
+    expect(imminent.addStack).toHaveBeenCalledOnce();
+    expect(imminent.layoutHorizontally).toHaveBeenCalledOnce();
+    expect(imminent.centerAlignContent).toHaveBeenCalledOnce();
+    expect(imminent.addSpacer).toHaveBeenCalledOnce();
     expect(distant.texts).toContain('2d');
     expect(distant.timer).not.toHaveBeenCalled();
   });
@@ -126,6 +161,7 @@ describe('Scriptable countdown widget', () => {
       const result = await run(payload, { stored: endpoint, family });
 
       expect(result.texts).not.toContain('Launch');
+      expect(result.addStack).not.toHaveBeenCalled();
       expect(result.timer).toHaveBeenCalled();
     }
   });
