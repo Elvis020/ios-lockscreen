@@ -21,6 +21,8 @@ export default async function handler(req: Request) {
   const browserNonce = readCookie(req, GOOGLE_OAUTH_COOKIE);
 
   if (!state || !browserNonce) {
+    console.warn(callbackRejection(state, code, providerError, browserNonce));
+
     return responseWithClearedCookie(
       'Google authorization parameters or browser session are missing',
       400,
@@ -40,6 +42,8 @@ export default async function handler(req: Request) {
   }
 
   if (!code) {
+    console.warn(callbackRejection(state, code, providerError, browserNonce));
+
     return responseWithClearedCookie(
       'Google authorization parameters or browser session are missing',
       400,
@@ -59,6 +63,26 @@ export default async function handler(req: Request) {
 
     return redirectWithClearedCookie(`${url.origin}/app?google=error`);
   }
+}
+
+function callbackRejection(
+  state: string | null,
+  code: string | null,
+  providerError: string | null,
+  browserNonce: string | null,
+) {
+  return {
+    event: 'google_oauth_callback_rejected',
+    reason: !state
+      ? 'missing_state'
+      : !browserNonce
+        ? 'missing_browser_nonce'
+        : 'missing_code',
+    hasState: Boolean(state),
+    hasCode: Boolean(code),
+    hasProviderError: Boolean(providerError),
+    hasBrowserNonce: Boolean(browserNonce),
+  };
 }
 
 function googleReturnUrl(value: string, status: 'connected' | 'error'): string {

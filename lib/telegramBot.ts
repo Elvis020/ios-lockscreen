@@ -1,3 +1,4 @@
+import { GoogleSyncError, googleSyncErrorMessage } from './calendar/googleErrors';
 import { syncGoogleEvents, type GoogleSyncResult } from './calendar/service';
 import {
   isEventCount,
@@ -288,7 +289,15 @@ export async function processTelegramUpdate(
     return { completionCommitted: result.completionCommitted };
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
-    const reply = expectedCommandErrorReply(message);
+    const reply =
+      error instanceof GoogleSyncError
+        ? htmlReply(
+            [
+              '<b>Google Calendar needs attention</b>',
+              googleSyncErrorMessage(error),
+            ].join('\n'),
+          )
+        : expectedCommandErrorReply(message);
 
     if (reply) {
       await sendTelegramReply(chatId, reply);

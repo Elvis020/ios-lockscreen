@@ -126,6 +126,26 @@ describe('Telegram commands', () => {
     expect(result.completionCommitted).toBe(false);
   });
 
+  it('sends actionable guidance when the Google Calendar API is disabled', async () => {
+    await seedLinkedUser();
+    const { GoogleSyncError } = await import('../lib/calendar/googleErrors');
+    const service = await import('../lib/calendar/service');
+
+    vi.spyOn(service, 'syncGoogleEvents').mockRejectedValue(
+      new GoogleSyncError('api_disabled'),
+    );
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const result = await processTelegramUpdate(
+      telegramUpdate('/sync'),
+      'https://example.com',
+    );
+
+    expect(deliveryBody(0).text).toBe(
+      "<b>Google Calendar needs attention</b>\nGoogle Calendar API is disabled. Enable it in this app's Google Cloud project, then try again.",
+    );
+    expect(result.completionCommitted).toBe(false);
+  });
+
   it.each(['agenda', 'minimal'])(
     'does not offer or select retired %s views',
     async (retired) => {

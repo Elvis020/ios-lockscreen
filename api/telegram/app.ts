@@ -1,3 +1,4 @@
+import { GoogleSyncError, googleSyncErrorMessage } from '../../lib/calendar/googleErrors';
 import {
   createGoogleBrowserNonce,
   readCookie,
@@ -249,6 +250,10 @@ export default async function handler(req: Request): Promise<Response> {
       response.headers.set('Retry-After', String(error.retryAfterSeconds));
 
       return response;
+    }
+
+    if (error instanceof GoogleSyncError) {
+      return jsonResponse({ error: googleSyncErrorMessage(error) }, 502);
     }
 
     if (

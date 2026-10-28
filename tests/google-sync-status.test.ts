@@ -3,6 +3,7 @@ import type { UserData } from '../lib/userSchema';
 import { InMemoryRedis } from './helpers/inMemoryRedis';
 
 let redis: InMemoryRedis;
+let failure: Error | undefined;
 let batch: {
   calendarCount: number;
   events: UserData['cachedCalEvents'];
@@ -14,6 +15,7 @@ describe('Google sync status', () => {
   beforeEach(() => {
     vi.resetModules();
     redis = new InMemoryRedis();
+    failure = undefined;
     batch = {
       calendarCount: 2,
       events: [],
@@ -28,6 +30,10 @@ describe('Google sync status', () => {
     vi.doMock('../lib/calendar/googleProvider', () => ({
       GoogleCalendarProvider: class {
         async listEvents() {
+          if (failure) {
+            throw failure;
+          }
+
           return batch;
         }
       },
@@ -66,6 +72,22 @@ describe('Google sync status', () => {
       trackedEventCount: 0,
     });
     expect((await redis.get<UserData>('user:owner'))?.cachedCalEvents).toEqual([event]);
+  });
+
+  it('preserves cached and selected events when the provider fails', async () => {
+    const event = googleEvent('account:event');
+    const original = userRecord({
+      googleAccounts: [googleAccount()],
+      selectedEventIds: [event.id],
+      cachedCalEvents: [event],
+    });
+
+    await redis.set('user:owner', original);
+    failure = new Error('Provider failure');
+    const { syncGoogleEvents } = await import('../lib/calendar/service');
+
+    await expect(syncGoogleEvents('owner')).rejects.toThrow('Provider failure');
+    expect(await redis.get<UserData>('user:owner')).toEqual(original);
   });
 
   it('summarizes the next tracked events after a successful sync', async () => {

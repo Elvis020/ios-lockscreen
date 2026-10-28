@@ -85,6 +85,25 @@ describe('Telegram control panel', () => {
     expect(state.setup.hasEvents).toBe(true);
   });
 
+  it('shows actionable guidance when the Google Calendar API is disabled', async () => {
+    await seedLinkedUser();
+    const initData = await signedInitData(42);
+    const { GoogleSyncError } = await import('../lib/calendar/googleErrors');
+    const service = await import('../lib/calendar/service');
+
+    vi.spyOn(service, 'syncGoogleEvents').mockRejectedValue(
+      new GoogleSyncError('api_disabled'),
+    );
+    const { default: handler } = await import('../api/telegram/app');
+    const response = await handler(appRequest({ action: 'sync-google', initData }));
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error:
+        "Google Calendar API is disabled. Enable it in this app's Google Cloud project, then try again.",
+    });
+  });
+
   it('rejects cross-origin mutations before reading Telegram data', async () => {
     const { default: handler } = await import('../api/telegram/app');
     const request = appRequest({ action: 'bootstrap', initData: 'forged' });

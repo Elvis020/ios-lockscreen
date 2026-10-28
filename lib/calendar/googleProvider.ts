@@ -1,3 +1,4 @@
+import { classifyGoogleResponse } from './googleErrors';
 import type { CalendarEvent } from '../userSchema';
 import type {
   CalendarProvider,
@@ -171,11 +172,16 @@ async function listVisibleCalendars(
       `https://www.googleapis.com/calendar/v3/users/me/calendarList?${params.toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
-    const payload = (await response.json()) as GoogleCalendarListResponse;
 
     if (!response.ok) {
-      throw new Error('Unable to list Google calendars');
+      throw classifyGoogleResponse(
+        'list_calendars',
+        response.status,
+        await response.json().catch(() => null),
+      );
     }
+
+    const payload = (await response.json()) as GoogleCalendarListResponse;
 
     calendars.push(
       ...(payload.items ?? []).flatMap((calendar) =>
@@ -240,11 +246,16 @@ async function listCalendarEvents(options: {
       `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendar.id)}/events?${params.toString()}`,
       { headers: { Authorization: `Bearer ${accessToken}` } },
     );
-    const payload = (await response.json()) as GoogleEventsResponse;
 
     if (!response.ok) {
-      throw new Error('Unable to sync Google Calendar');
+      throw classifyGoogleResponse(
+        'list_events',
+        response.status,
+        await response.json().catch(() => null),
+      );
     }
+
+    const payload = (await response.json()) as GoogleEventsResponse;
 
     events.push(
       ...(payload.items ?? []).flatMap((event) => {
@@ -337,18 +348,10 @@ async function refreshAccessToken(encryptedRefreshToken: string): Promise<string
       grant_type: 'refresh_token',
     }),
   });
-  const tokens = (await response.json()) as GoogleTokenResponse;
+  const tokens = (await response.json().catch(() => null)) as GoogleTokenResponse | null;
 
-  if (!response.ok || !tokens.access_token) {
-    if (
-      response.status === 400 ||
-      response.status === 401 ||
-      tokens.error === 'invalid_grant'
-    ) {
-      throw new Error('Google account must be reconnected');
-    }
-
-    throw new Error('Unable to refresh Google access');
+  if (!response.ok || !tokens?.access_token) {
+    throw classifyGoogleResponse('refresh_token', response.status, tokens);
   }
 
   return tokens.access_token;
