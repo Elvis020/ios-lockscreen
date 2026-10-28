@@ -11,6 +11,13 @@ Calendar Lockscreen runs as Vercel Edge functions and uses Redis as the shared s
 
 The application cannot force iOS to refresh a wallpaper. Run the Shortcut manually or with an iOS automation after changing settings; this is not a server-push feature.
 
+The optional [Lock Screen countdown widget](./countdown-widget.md) is separate from
+the wallpaper automation. Its private `/api/countdown` feed accepts only the read-only
+wallpaper key, returns the next event's display name/date and timer metadata, and
+disables browser and CDN caching. Scriptable stores the validated endpoint in Keychain;
+event responses are not persisted. A native iOS timer updates its own text between
+best-effort widget refreshes, so no hourly Shortcuts automations are required.
+
 ## Tokens and URLs
 
 - The management token can change account data and must remain private.
@@ -111,7 +118,7 @@ printed beside events. Each displayed event has a single name/countdown line and
 thin, three-pixel progress track on the full-resolution image. In dot views, the
 entire rail follows the centered outer-ring grid envelope; other views keep the full
 content width. Compact rows use
-`Today`, `1d`, or `22d`; long names truncate without displacing the countdown. The
+`Today`, `Tomorrow`, or `22d`; long names truncate without displacing the countdown. The
 large countdown display has no event timer line; additional Countdown events do.
 
 Every active presentation honors the same saved display count: 1–5 events, default

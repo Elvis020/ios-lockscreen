@@ -73,6 +73,22 @@ describe('shared countdown endpoint', () => {
     expect(await response.text()).toBe('Not found');
   });
 
+  it('calls an event one civil day away Tomorrow', async () => {
+    await seedShare({
+      id: 'manual',
+      name: 'Tomorrow event',
+      date: '2026-02-02',
+      source: 'manual',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      category: 'general',
+      recurrence: 'none',
+    });
+    const { default: handler } = await import('../api/share');
+    const response = await handler(request());
+
+    expect(await response.text()).toContain('<strong>Tomorrow</strong>');
+  });
+
   it('uses a generic 404 for invalid methods and missing bearer keys', async () => {
     const { default: handler } = await import('../api/share');
 

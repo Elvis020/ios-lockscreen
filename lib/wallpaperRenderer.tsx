@@ -299,9 +299,9 @@ function Countdown({ model }: { model: WallpaperModel }): ReactElement {
             lineHeight: 1.2,
           }}
         >
-          {event.daysLeft === 0 ? 'Today' : event.daysLeft}
+          {event.daysLeft <= 1 ? event.countdownLabel : event.daysLeft}
         </div>
-        {event.daysLeft > 0 ? (
+        {event.daysLeft > 1 ? (
           <div
             style={{
               display: 'flex',
@@ -314,7 +314,7 @@ function Countdown({ model }: { model: WallpaperModel }): ReactElement {
               fontSize: 30,
             }}
           >
-            {event.daysLeft === 1 ? 'day away' : 'days away'}
+            days away
           </div>
         ) : null}
         <div
@@ -640,7 +640,7 @@ function EventRow({
           style={{
             display: 'flex',
             flexShrink: 0,
-            width: layout?.columns === 2 ? 80 : 140,
+            width: layout?.countdownWidth ?? 160,
             justifyContent: 'flex-end',
             color:
               event.daysLeft <= 1

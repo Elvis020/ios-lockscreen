@@ -108,7 +108,7 @@ describe('buildWallpaperModel', () => {
       'November',
       'December',
     ]);
-    expect(quarter.events[0]?.countdownLabel).toBe('1d');
+    expect(quarter.events[0]?.countdownLabel).toBe('Tomorrow');
     expect(year.monthGroups).toHaveLength(12);
   });
 
@@ -187,7 +187,7 @@ describe('buildWallpaperModel', () => {
     });
 
     expect(model.events[0]).toMatchObject({
-      countdownLabel: '1d',
+      countdownLabel: 'Tomorrow',
       progressPercent: 50,
     });
   });

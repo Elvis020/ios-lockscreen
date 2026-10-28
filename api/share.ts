@@ -39,7 +39,7 @@ export default async function handler(req: Request): Promise<Response> {
   const days = civilDays(today, date);
 
   if (days < 0) return notFound();
-  const label = days === 0 ? 'Today' : days === 1 ? '1 day' : `${days} days`;
+  const label = days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : `${days} days`;
 
   return new Response(
     `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Countdown</title><main><p>Countdown</p><h1>${escapeHtml(event.name)}</h1><strong>${label}</strong><p>${date}</p></main>`,

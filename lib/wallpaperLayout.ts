@@ -89,6 +89,7 @@ export interface WallpaperEventLayout {
   rows: number;
   nameSize: number;
   countdownSize: number;
+  countdownWidth: number;
   timerGap: number;
   startIndex: number;
   visibleCount: number;
@@ -172,6 +173,7 @@ function createEventLayout(
     rows,
     nameSize: dense ? 24 : compact ? 34 : 40,
     countdownSize: dense ? 22 : compact ? 30 : 32,
+    countdownWidth: columns === 2 ? 120 : 160,
     timerGap: dense ? 6 : compact ? 12 : 18,
     startIndex,
     visibleCount,
@@ -313,7 +315,7 @@ export function getCountdownComposition(model: WallpaperModel) {
   const band = LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile];
   const availableTop = band.top + HEADER_HEIGHT + HEADER_TO_PRESENTATION_GAP;
   const layout = getWallpaperEventLayout(model);
-  const heroHeight = model.events[0]?.daysLeft === 0 ? 196 : 240;
+  const heroHeight = (model.events[0]?.daysLeft ?? 2) <= 1 ? 196 : 240;
   const hasRail = layout.visibleCount > 0 || layout.overflow > 0;
   const height = heroHeight + (hasRail ? 28 + layout.contentHeight : 0);
   const top = availableTop + (band.bottom - availableTop - height) / 2;

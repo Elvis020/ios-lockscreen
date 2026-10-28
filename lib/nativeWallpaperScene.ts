@@ -352,7 +352,7 @@ function addCountdown(
 
   addText(
     scene,
-    event.daysLeft === 0 ? 'Today' : String(event.daysLeft),
+    event.daysLeft <= 1 ? event.countdownLabel : String(event.daysLeft),
     {
       x: CONTENT_LEFT,
       y: start,
@@ -365,10 +365,10 @@ function addCountdown(
     'center',
   );
 
-  if (event.daysLeft > 0) {
+  if (event.daysLeft > 1) {
     addText(
       scene,
-      event.daysLeft === 1 ? 'day away' : 'days away',
+      'days away',
       {
         x: CONTENT_LEFT,
         y: start + 106,
@@ -446,7 +446,7 @@ function addEventRow(
   const countdownSize = layout.countdownSize;
   const countdownHeight = Math.ceil(countdownSize * 1.2);
   const gap = layout.timerGap;
-  const countdownWidth = layout.columns === 2 ? 80 : 140;
+  const countdownWidth = layout.countdownWidth;
   const nameGap = layout.columns === 2 ? 16 : 28;
   const textTop = top + (layout.rowHeight - (nameHeight + gap + 3)) / 2;
 

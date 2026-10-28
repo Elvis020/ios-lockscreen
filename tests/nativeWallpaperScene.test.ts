@@ -219,11 +219,11 @@ describe('native wallpaper scene', () => {
 
       expect(eventName).toMatchObject({
         x: CONTENT_LEFT + layout.railLeft,
-        width: layout.cellWidth - 140 - 28,
+        width: layout.cellWidth - layout.countdownWidth - 28,
       });
       expect(countdown).toMatchObject({
-        x: CONTENT_LEFT + layout.railLeft + layout.cellWidth - 140,
-        width: 140,
+        x: CONTENT_LEFT + layout.railLeft + layout.cellWidth - layout.countdownWidth,
+        width: layout.countdownWidth,
       });
       expect(timer).toMatchObject({
         x: CONTENT_LEFT + layout.railLeft,
@@ -431,6 +431,22 @@ describe('native wallpaper scene', () => {
     expect(values).not.toContain('October');
     expect(values).toContain('No upcoming events');
     expect(scene.commands.some((command) => command.kind === 'roundRect')).toBe(false);
+  });
+
+  it('uses Tomorrow without a secondary day-away line in the countdown hero', () => {
+    const scene = buildNativeWallpaperScene(
+      buildWallpaperModel({
+        date,
+        presentation: 'countdown',
+        publicEvents: [{ name: 'Launch', date: '2026-10-25' }],
+      }),
+    );
+    const values = scene.commands.flatMap((command) =>
+      command.kind === 'text' ? [command.value] : [],
+    );
+
+    expect(values).toContain('Tomorrow');
+    expect(values).not.toContain('day away');
   });
 
   it('supports theme colors and sanitizes control characters in text', () => {

@@ -318,7 +318,7 @@ describe('wallpaper renderer', () => {
     expect(text).toContain('Upcoming event 3');
     expect(text).not.toContain('Upcoming event 4');
     expect(text).toContain('Today');
-    expect(text).toContain('1d');
+    expect(text).toContain('Tomorrow');
     expect(text).toContain('+7 more');
     expect(text).not.toContain('Q4 2026');
     expect(text).not.toMatch(/Oct 2[3-9]/);
@@ -347,6 +347,18 @@ describe('wallpaper renderer', () => {
         presentation === 'minimal',
       );
     }
+  });
+
+  it('uses Tomorrow without a secondary day-away line in the countdown hero', () => {
+    const model = buildWallpaperModel({
+      date,
+      presentation: 'countdown',
+      publicEvents: [{ name: 'Launch', date: '2026-10-24' }],
+    });
+    const { text } = inspectCanvas(WallpaperCanvas({ model }));
+
+    expect(text).toContain('Tomorrow');
+    expect(text).not.toContain('day away');
   });
 
   it('keeps the centered quarter summary without weekday labels', () => {

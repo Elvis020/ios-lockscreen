@@ -43,12 +43,17 @@ export default tseslint.config(
     languageOptions: {
       globals: {
         args: 'readonly',
+        Alert: 'readonly',
+        config: 'readonly',
         Color: 'readonly',
         Data: 'readonly',
         DrawContext: 'readonly',
         Font: 'readonly',
+        Keychain: 'readonly',
+        ListWidget: 'readonly',
         Path: 'readonly',
         Rect: 'readonly',
+        Request: 'readonly',
         Script: 'readonly',
         Size: 'readonly',
       },
