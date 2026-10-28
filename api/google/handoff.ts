@@ -47,7 +47,14 @@ export default async function handler(req: Request): Promise<Response> {
     return invalidLaunchResponse();
   }
 
-  const response = jsonResponse({ authorizationUrl: launch.authorizationUrl });
+  const response = new Response(null, {
+    status: 303,
+    headers: {
+      Location: launch.authorizationUrl,
+      'Cache-Control': 'private, no-store, max-age=0',
+      'Referrer-Policy': 'no-referrer',
+    },
+  });
 
   response.headers.append('Set-Cookie', googleOAuthCookie(launch.browserNonce));
   response.headers.append('Set-Cookie', telegramAppSessionCookie(launch.sessionId));
@@ -56,7 +63,12 @@ export default async function handler(req: Request): Promise<Response> {
 }
 
 async function parseCapability(req: Request): Promise<string | null> {
-  if (!req.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+  if (
+    !req.headers
+      .get('content-type')
+      ?.toLowerCase()
+      .startsWith('application/x-www-form-urlencoded')
+  ) {
     return null;
   }
 
@@ -72,28 +84,18 @@ async function parseCapability(req: Request): Promise<string | null> {
     return null;
   }
 
-  let value: unknown;
-
-  try {
-    value = JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return null;
-  }
-
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return null;
-  }
-
-  const body = value as Record<string, unknown>;
+  const body = new URLSearchParams(new TextDecoder().decode(bytes));
+  const values = body.getAll('capability');
 
   if (
-    Object.keys(body).length !== 1 ||
-    !CAPABILITY_PATTERN.test(String(body.capability))
+    [...body.keys()].length !== 1 ||
+    values.length !== 1 ||
+    !CAPABILITY_PATTERN.test(values[0])
   ) {
     return null;
   }
 
-  return typeof body.capability === 'string' ? body.capability : null;
+  return values[0];
 }
 
 async function readBoundedBody(req: Request): Promise<Uint8Array | null> {
@@ -178,13 +180,12 @@ function handoffHeaders(nonce: string): Record<string, string> {
     'Content-Security-Policy': [
       "default-src 'none'",
       `script-src 'nonce-${nonce}'`,
-      "connect-src 'self'",
       "base-uri 'none'",
-      "form-action 'none'",
+      "form-action 'self' https://accounts.google.com",
       "frame-ancestors 'none'",
     ].join('; '),
     'Content-Type': 'text/html; charset=utf-8',
-    'Referrer-Policy': 'no-referrer',
+    'Referrer-Policy': 'same-origin',
     'X-Content-Type-Options': 'nosniff',
   };
 }
@@ -206,23 +207,22 @@ function handoffPage(nonce: string): string {
 
       window.history.replaceState(null, '', window.location.pathname);
 
-      fetch('/api/google/handoff', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ capability }),
-      })
-        .then(async (response) => {
-          const result = await response.json().catch(() => null);
+      if (!/^[A-Za-z0-9_-]{43}$/.test(capability)) {
+        status.textContent = 'This Google connection link is invalid or has expired. Return to Telegram and try again.';
+        return;
+      }
 
-          if (!response.ok || !result || typeof result.authorizationUrl !== 'string') {
-            throw new Error('invalid launch');
-          }
+      const form = document.createElement('form');
+      const input = document.createElement('input');
 
-          window.location.replace(result.authorizationUrl);
-        })
-        .catch(() => {
-          status.textContent = 'This Google connection link is invalid or has expired. Return to Telegram and try again.';
-        });
+      form.method = 'POST';
+      form.action = '/api/google/handoff';
+      input.type = 'hidden';
+      input.name = 'capability';
+      input.value = capability;
+      form.appendChild(input);
+      document.body.appendChild(form);
+      form.submit();
     })();
   </script>
 </body>

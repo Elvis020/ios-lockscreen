@@ -177,7 +177,7 @@ describe('Telegram control panel', () => {
   it('opens Google OAuth through a fragment-only external-browser handoff', async () => {
     process.env.GOOGLE_CLIENT_ID = 'client-id';
     process.env.GOOGLE_CLIENT_SECRET = 'client-secret';
-    process.env.GOOGLE_REDIRECT_URI = 'https://example.com/api/google/callback';
+    process.env.GOOGLE_REDIRECT_URI = 'https://canonical.example/api/google/callback';
     process.env.GOOGLE_OAUTH_ENCRYPTION_KEY =
       'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
     await seedLinkedUser();
@@ -190,6 +190,7 @@ describe('Telegram control panel', () => {
     const capability = handoffUrl.hash.slice(1);
 
     expect(started.status).toBe(200);
+    expect(handoffUrl.origin).toBe('https://canonical.example');
     expect(handoffUrl.pathname).toBe('/api/google/handoff');
     expect(handoffUrl.search).toBe('');
     expect(capability).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -207,6 +208,16 @@ describe('Telegram control panel', () => {
       sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
     });
     expect(JSON.stringify(launch)).not.toContain('owner');
+    const authorizationUrl = new URL(launch!.authorizationUrl);
+    const state = authorizationUrl.searchParams.get('state');
+    const oauthState = await redis.get<{ returnOrigin: string }>(
+      `oauth:google:state:${state}`,
+    );
+
+    expect(authorizationUrl.searchParams.get('redirect_uri')).toBe(
+      'https://canonical.example/api/google/callback',
+    );
+    expect(oauthState?.returnOrigin).toBe('https://canonical.example/api/telegram/app');
   });
 
   it('only resets the event form after a successful add-event mutation', async () => {

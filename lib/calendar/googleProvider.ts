@@ -296,6 +296,34 @@ export function isGoogleConfigured(): boolean {
   );
 }
 
+export function getGoogleCallbackOrigin(): string {
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+
+  if (!redirectUri) {
+    throw new Error('Google Calendar is not configured');
+  }
+
+  let callback: URL;
+
+  try {
+    callback = new URL(redirectUri);
+  } catch {
+    throw new Error('Google redirect URI is invalid');
+  }
+
+  if (
+    callback.protocol !== 'https:' ||
+    callback.username ||
+    callback.password ||
+    callback.search ||
+    callback.hash
+  ) {
+    throw new Error('Google redirect URI is invalid');
+  }
+
+  return callback.origin;
+}
+
 async function refreshAccessToken(encryptedRefreshToken: string): Promise<string> {
   const config = getGoogleConfig();
   const refreshToken = await decryptSecret(encryptedRefreshToken);

@@ -4,6 +4,7 @@ import {
   TELEGRAM_APP_SESSION_COOKIE,
   TELEGRAM_APP_SESSION_SECONDS,
 } from '../../lib/calendar/oauthSession';
+import { getGoogleCallbackOrigin } from '../../lib/calendar/googleProvider';
 import { createGoogleAuthorization, syncGoogleEvents } from '../../lib/calendar/service';
 import { apiErrorResponse, jsonResponse } from '../../lib/http';
 import {
@@ -209,7 +210,8 @@ export default async function handler(req: Request): Promise<Response> {
 
     if (body.action === 'start-google') {
       const browserNonce = createGoogleBrowserNonce();
-      const returnUrl = `${new URL(req.url).origin}/api/telegram/app`;
+      const callbackOrigin = getGoogleCallbackOrigin();
+      const returnUrl = `${callbackOrigin}/api/telegram/app`;
       const authorizationUrl = await createGoogleAuthorization(
         account.token,
         returnUrl,
@@ -235,7 +237,7 @@ export default async function handler(req: Request): Promise<Response> {
       );
 
       return jsonResponse({
-        handoffUrl: `${new URL(req.url).origin}/api/google/handoff#${capability}`,
+        handoffUrl: `${callbackOrigin}/api/google/handoff#${capability}`,
       });
     }
 

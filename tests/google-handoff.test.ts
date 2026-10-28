@@ -26,15 +26,20 @@ describe('Google OAuth external-browser handoff', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get('cache-control')).toContain('no-store');
-    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(response.headers.get('referrer-policy')).toBe('same-origin');
     expect(response.headers.get('content-security-policy')).toContain(
       "default-src 'none'",
     );
     expect(response.headers.get('content-security-policy')).toContain(
       "frame-ancestors 'none'",
     );
+    expect(response.headers.get('content-security-policy')).toContain(
+      "form-action 'self' https://accounts.google.com",
+    );
     expect(html).toContain('window.location.hash.slice(1)');
+    expect(html).toContain('form.submit()');
     expect(html).not.toContain('accounts.google.com');
+    expect(html).not.toContain('a'.repeat(43));
   });
 
   it('rejects missing and invalid capabilities without issuing cookies', async () => {
@@ -67,17 +72,23 @@ describe('Google OAuth external-browser handoff', () => {
     const first = await handler(postHandoff({ capability }));
     const replay = await handler(postHandoff({ capability }));
 
-    expect(first.status).toBe(200);
-    await expect(first.json()).resolves.toEqual({ authorizationUrl });
-    expect(first.headers.get('set-cookie')).toContain(
-      'calendar_google_oauth=' + 'b'.repeat(43),
-    );
-    expect(first.headers.get('set-cookie')).toContain(
+    expect(first.status).toBe(303);
+    expect(first.headers.get('location')).toBe(authorizationUrl);
+    expect(first.headers.get('location')).not.toContain(capability);
+    expect(first.headers.get('cache-control')).toContain('no-store');
+    expect(first.headers.get('referrer-policy')).toBe('no-referrer');
+    const cookies = first.headers.getSetCookie();
+
+    expect(cookies).toHaveLength(2);
+    expect(cookies[0]).toContain('calendar_google_oauth=' + 'b'.repeat(43));
+    expect(cookies[1]).toContain(
       'calendar_telegram_app=12345678-1234-4234-8234-123456789abc',
     );
-    expect(first.headers.get('set-cookie')).toContain('HttpOnly');
-    expect(first.headers.get('set-cookie')).toContain('Secure');
-    expect(first.headers.get('set-cookie')).toContain('SameSite=Lax');
+    for (const cookie of cookies) {
+      expect(cookie).toContain('HttpOnly');
+      expect(cookie).toContain('Secure');
+      expect(cookie).toContain('SameSite=Lax');
+    }
     expect(replay.status).toBe(400);
     expect(await redis.get(`telegram:google:launch:${capability}`)).toBeNull();
   });
@@ -88,25 +99,43 @@ describe('Google OAuth external-browser handoff', () => {
     await redis.set(`telegram:google:launch:${capability}`, validLaunch());
 
     const { default: handler } = await import('../api/google/handoff');
-    const request = postHandoff({ capability });
 
-    request.headers.set('Origin', 'https://evil.example');
+    for (const origin of ['https://evil.example', 'null']) {
+      const request = postHandoff({ capability });
 
-    const response = await handler(request);
+      request.headers.set('Origin', origin);
 
-    expect(response.status).toBe(400);
+      const response = await handler(request);
+
+      expect(response.status).toBe(400);
+    }
     expect(await redis.get(`telegram:google:launch:${capability}`)).not.toBeNull();
+  });
+
+  it('rejects unsafe or malformed configured callback URLs', async () => {
+    const { getGoogleCallbackOrigin } = await import('../lib/calendar/googleProvider');
+
+    for (const redirectUri of [
+      'not-a-url',
+      'http://example.com/api/google/callback',
+      'https://user@example.com/api/google/callback',
+      'https://example.com/api/google/callback?extra=1',
+      'https://example.com/api/google/callback#fragment',
+    ]) {
+      process.env.GOOGLE_REDIRECT_URI = redirectUri;
+      expect(() => getGoogleCallbackOrigin()).toThrow('Google redirect URI is invalid');
+    }
   });
 });
 
-function postHandoff(body: unknown): Request {
+function postHandoff(body: Record<string, string>): Request {
   return new Request('https://example.com/api/google/handoff', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
+      'Content-Type': 'application/x-www-form-urlencoded',
       Origin: 'https://example.com',
     },
-    body: JSON.stringify(body),
+    body: new URLSearchParams(body),
   });
 }
 
