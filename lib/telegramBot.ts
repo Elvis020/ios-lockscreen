@@ -1187,17 +1187,20 @@ async function runLinkedTelegramCommand(
   if (command === '/events') {
     const user = await getUser(token);
 
-    if (!user?.events.length && !user?.selectedEventIds.length) {
-      return {
-        reply: htmlReply(
-          ['<b>No manual events</b>', 'Add one with <code>/add Event name</code>.'].join(
-            '\n',
-          ),
-        ),
-        completionCommitted: false,
-      };
-    }
+    if (!user) throw new Error('Linked account no longer exists');
 
+    const manageButton: TelegramInlineKeyboardMarkup = {
+      inline_keyboard: [
+        [
+          {
+            text: 'Manage events',
+            web_app: { url: `${calendarOrigin(origin)}/api/telegram/app` },
+          },
+        ],
+      ],
+    };
+
+    const today = localDate(user.timeZone);
     const events = buildUpcomingEventTimeline(
       user.events,
       user.cachedCalEvents.map((event): CategorizedCalendarEvent => ({
@@ -1205,16 +1208,14 @@ async function runLinkedTelegramCommand(
         category: user.googleCategoryOverrides?.[event.id] ?? 'general',
       })),
       user.selectedEventIds,
-      localDate(user.timeZone),
+      today,
     );
 
     if (!events.length) {
       return {
         reply: htmlReply(
-          [
-            '<b>No upcoming tracked events</b>',
-            'Add one with <code>/add Event name</code>, or refresh Google Calendar with <code>/sync</code>.',
-          ].join('\n'),
+          '<b>No upcoming events</b>\nAdd one with <code>/add Event name</code> or refresh Google with <code>/sync</code>.',
+          manageButton,
         ),
         completionCommitted: false,
       };
@@ -1223,15 +1224,33 @@ async function runLinkedTelegramCommand(
     return {
       reply: htmlReply(
         [
-          '<b>Upcoming tracked events</b>',
+          '<b>Upcoming events</b>',
           '',
-          ...events.map(
-            (event) =>
-              `${event.stableRef}. <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)} <i>${escapeTelegramHtml(event.category)}</i>${event.recurrence && event.recurrence !== 'none' ? ` · ${event.recurrence}` : ''}`,
-          ),
+          ...events
+            .map((event) => {
+              const metadata = [
+                formatUpcomingEventDate(event.date, today),
+                event.source === 'manual' ? 'Manual' : 'Google',
+                ...(event.category === 'general' ? [] : [titleCase(event.category)]),
+                ...(event.source === 'manual' &&
+                event.recurrence &&
+                event.recurrence !== 'none'
+                  ? [`Repeats ${event.recurrence}`]
+                  : []),
+              ];
+
+              return `<b>${escapeTelegramHtml(event.name)}</b>\n${metadata.map(escapeTelegramHtml).join(' · ')} · <code>${escapeTelegramHtml(event.stableRef)}</code>`;
+            })
+            .flatMap((event, index) => (index === 0 ? [event] : ['', event])),
           '',
-          'Edit one with <code>/edit</code> or delete one with <code>/delete NUMBER</code>.',
+          ...(events.some((event) => event.source === 'manual')
+            ? ['Manual events: <code>/edit</code>.']
+            : []),
+          ...(events.some((event) => event.source === 'google')
+            ? ['Google selections: control panel.']
+            : []),
         ].join('\n'),
+        manageButton,
       ),
       completionCommitted: false,
     };
@@ -2400,6 +2419,29 @@ function autoProfileText(profiles: import('./userSchema').AutomaticProfiles): st
       return `${name}: ${slot.enabled ? 'on' : 'off'} · ${ranges[name]} · ${escapeTelegramHtml(slot.theme ?? 'current theme')}`;
     }),
   ].join('\n');
+}
+
+function formatUpcomingEventDate(date: string, today: string): string {
+  if (date === today) return 'Today';
+
+  const tomorrow = new Date(`${today}T00:00:00Z`);
+
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+
+  if (date === tomorrow.toISOString().slice(0, 10)) return 'Tomorrow';
+
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).formatToParts(new Date(`${date}T12:00:00Z`));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((item) => item.type === type)?.value;
+  const year = date.slice(0, 4) === today.slice(0, 4) ? '' : ` ${part('year')}`;
+
+  return `${part('weekday')}, ${part('day')} ${part('month')}${year}`;
 }
 
 function localDate(timeZone: string): string {

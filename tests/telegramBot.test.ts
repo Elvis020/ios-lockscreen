@@ -787,8 +787,16 @@ describe('Telegram commands', () => {
     await processTelegramUpdate(telegramUpdate('/something'), 'https://example.com');
 
     expect(deliveryBody(0).text).toBe(
-      '<b>No manual events</b>\nAdd one with <code>/add Event name</code>.',
+      '<b>No upcoming events</b>\nAdd one with <code>/add Event name</code> or refresh Google with <code>/sync</code>.',
     );
+    expect(deliveryBody(0).reply_markup.inline_keyboard).toEqual([
+      [
+        {
+          text: 'Manage events',
+          web_app: { url: 'https://example.com/api/telegram/app' },
+        },
+      ],
+    ]);
     expect(deliveryBody(1).text).toContain('<b>Try a name and date</b>');
     expect(deliveryBody(2).text).toBe(
       '<b>Command not recognised</b>\nUse <code>/help</code> to see available commands.',
@@ -1007,6 +1015,74 @@ describe('Telegram commands', () => {
     expect(deliveryBody(0)).toMatchObject({ text: 'Already cancelled.' });
   });
 
+  it('presents escaped event names, useful metadata, and the manage action', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-31T12:00:00.000Z'));
+    await seedLinkedUser({
+      events: [
+        {
+          ...manualEvent('launch', 'Launch <&>'),
+          category: 'work',
+          recurrence: 'yearly',
+        },
+        manualEvent('general', 'General event'),
+      ],
+      selectedEventIds: ['trip'],
+      cachedCalEvents: [googleEvent('trip')],
+      googleCategoryOverrides: { trip: 'travel' },
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
+
+    expect(deliveryBody(0).text).toBe(
+      '<b>Upcoming events</b>\n\n' +
+        '<b>General event</b>\nTomorrow · Manual · <code>M2</code>\n\n' +
+        '<b>Launch &lt;&amp;&gt;</b>\nTomorrow · Manual · Work · Repeats yearly · <code>M1</code>\n\n' +
+        '<b>Google trip</b>\nMon, 2 Nov · Google · Travel · <code>G1</code>\n\n' +
+        'Manual events: <code>/edit</code>.\nGoogle selections: control panel.',
+    );
+    expect(deliveryBody(0).reply_markup.inline_keyboard).toEqual([
+      [
+        {
+          text: 'Manage events',
+          web_app: { url: 'https://example.com/api/telegram/app' },
+        },
+      ],
+    ]);
+  });
+
+  it('uses compact dates with the year when it differs and manual-only guidance', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-01T12:00:00.000Z'));
+    await seedLinkedUser({
+      events: [
+        { ...manualEvent('today', 'Today'), date: '2026-11-01' },
+        { ...manualEvent('tomorrow', 'Tomorrow'), date: '2026-11-02' },
+        { ...manualEvent('later', 'Later'), date: '2026-11-14' },
+        { ...manualEvent('next', 'Next year'), date: '2027-01-02' },
+      ],
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
+
+    expect(deliveryBody(0).text).toContain(
+      '<b>Today</b>\nToday · Manual · <code>M1</code>',
+    );
+    expect(deliveryBody(0).text).toContain(
+      '<b>Tomorrow</b>\nTomorrow · Manual · <code>M2</code>',
+    );
+    expect(deliveryBody(0).text).toContain(
+      '<b>Later</b>\nSat, 14 Nov · Manual · <code>M3</code>',
+    );
+    expect(deliveryBody(0).text).toContain(
+      '<b>Next year</b>\nSat, 2 Jan 2027 · Manual · <code>M4</code>',
+    );
+    expect(deliveryBody(0).text).toContain('Manual events: <code>/edit</code>.');
+    expect(deliveryBody(0).text).not.toContain('Google selections');
+  });
+
   it('uses one canonical Google reference order across event lists and sharing', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-31T12:00:00.000Z'));
@@ -1018,8 +1094,15 @@ describe('Telegram commands', () => {
 
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
-    expect(deliveryBody(0).text).toContain('G1. <b>2026-11-02</b> · Google first');
-    expect(deliveryBody(0).text).toContain('G2. <b>2026-11-02</b> · Google second');
+    expect(deliveryBody(0).text).toContain('Google selections: control panel.');
+    expect(deliveryBody(0).text).not.toContain('/edit');
+    expect(deliveryBody(0).text).not.toContain('/delete');
+    expect(deliveryBody(0).text).toContain(
+      '<b>Google first</b>\nMon, 2 Nov · Google · <code>G1</code>',
+    );
+    expect(deliveryBody(0).text).toContain(
+      '<b>Google second</b>\nMon, 2 Nov · Google · <code>G2</code>',
+    );
 
     fetchMock.mockClear();
     await processTelegramUpdate(telegramUpdate('/share G1'), 'https://example.com');
@@ -1041,7 +1124,9 @@ describe('Telegram commands', () => {
 
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
-    expect(deliveryBody(0).text).toContain('G2. <b>2026-11-02</b> · Google present');
+    expect(deliveryBody(0).text).toContain(
+      '<b>Google present</b>\nMon, 2 Nov · Google · <code>G2</code>',
+    );
 
     await processTelegramUpdate(telegramUpdate('/focus G2'), 'https://example.com');
     await processTelegramUpdate(
@@ -1082,9 +1167,15 @@ describe('Telegram commands', () => {
 
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
-    expect(deliveryBody(0).text).toContain('M2. <b>2026-10-31</b> · Today manual');
-    expect(deliveryBody(0).text).toContain('M3. <b>2026-11-06</b> · Recurring manual');
-    expect(deliveryBody(0).text).toContain('G2. <b>2026-10-31</b> · Google today-google');
+    expect(deliveryBody(0).text).toContain(
+      '<b>Today manual</b>\nToday · Manual · <code>M2</code>',
+    );
+    expect(deliveryBody(0).text).toContain(
+      '<b>Recurring manual</b>\nFri, 6 Nov · Manual · Repeats weekly · <code>M3</code>',
+    );
+    expect(deliveryBody(0).text).toContain(
+      '<b>Google today-google</b>\nToday · Google · <code>G2</code>',
+    );
     expect(deliveryBody(0).text).not.toContain('Past manual');
     expect(deliveryBody(0).text).not.toContain('Google past-google');
 
@@ -1094,7 +1185,7 @@ describe('Telegram commands', () => {
     expect((await getUser('owner'))?.focusEventId).toBe('today');
   });
 
-  it('gives add and sync guidance when every tracked event is already past', async () => {
+  it('shows the empty state when every tracked event is already past', async () => {
     await seedLinkedUser({
       events: [{ ...manualEvent('past', 'Past manual'), date: '2000-01-01' }],
       selectedEventIds: ['past-google'],
@@ -1105,7 +1196,7 @@ describe('Telegram commands', () => {
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
     expect(deliveryBody(0).text).toBe(
-      '<b>No upcoming tracked events</b>\nAdd one with <code>/add Event name</code>, or refresh Google Calendar with <code>/sync</code>.',
+      '<b>No upcoming events</b>\nAdd one with <code>/add Event name</code> or refresh Google with <code>/sync</code>.',
     );
   });
 
