@@ -21,6 +21,7 @@ describe('Telegram commands', () => {
 
   afterEach(() => {
     process.env = { ...originalEnvironment };
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -469,6 +470,8 @@ describe('Telegram commands', () => {
   });
 
   it('escapes event names before sending HTML replies', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-31T12:00:00.000Z'));
     await seedLinkedUser();
     const { processTelegramUpdate } = await import('../lib/telegramBot');
 
@@ -1005,6 +1008,8 @@ describe('Telegram commands', () => {
   });
 
   it('uses one canonical Google reference order across event lists and sharing', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-31T12:00:00.000Z'));
     await seedLinkedUser({
       selectedEventIds: ['first', 'second'],
       cachedCalEvents: [googleEvent('second'), googleEvent('first')],
@@ -1022,6 +1027,86 @@ describe('Telegram commands', () => {
     const user = await redis.get<UserData>('user:owner');
 
     expect(user?.sharedCountdowns?.[0]).toMatchObject({ eventId: 'first' });
+  });
+
+  it('resolves G references from selection order when a selected cache entry is missing', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-31T12:00:00.000Z'));
+    await seedLinkedUser({
+      selectedEventIds: ['missing', 'present'],
+      cachedCalEvents: [{ ...googleEvent('present'), date: '2026-11-02' }],
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+
+    await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
+
+    expect(deliveryBody(0).text).toContain('G2. <b>2026-11-02</b> · Google present');
+
+    await processTelegramUpdate(telegramUpdate('/focus G2'), 'https://example.com');
+    await processTelegramUpdate(
+      telegramUpdate('/category G2 travel'),
+      'https://example.com',
+    );
+    await processTelegramUpdate(telegramUpdate('/share G2'), 'https://example.com');
+
+    const user = await getUser('owner');
+
+    expect(user?.focusEventId).toBe('present');
+    expect(user?.googleCategoryOverrides?.present).toBe('travel');
+    expect(user?.sharedCountdowns?.[0]).toMatchObject({ eventId: 'present' });
+  });
+
+  it('lists upcoming events in the user time zone without renumbering command references', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-01T00:30:00.000Z'));
+    await seedLinkedUser({
+      timeZone: 'America/Los_Angeles',
+      events: [
+        { ...manualEvent('past', 'Past manual'), date: '2026-10-30' },
+        { ...manualEvent('today', 'Today manual'), date: '2026-10-31' },
+        {
+          ...manualEvent('recurring', 'Recurring manual'),
+          date: '2026-10-30',
+          recurrence: 'weekly',
+        },
+      ],
+      selectedEventIds: ['past-google', 'today-google'],
+      cachedCalEvents: [
+        { ...googleEvent('past-google'), date: '2026-10-30' },
+        { ...googleEvent('today-google'), date: '2026-10-31' },
+      ],
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+
+    await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
+
+    expect(deliveryBody(0).text).toContain('M2. <b>2026-10-31</b> · Today manual');
+    expect(deliveryBody(0).text).toContain('M3. <b>2026-11-06</b> · Recurring manual');
+    expect(deliveryBody(0).text).toContain('G2. <b>2026-10-31</b> · Google today-google');
+    expect(deliveryBody(0).text).not.toContain('Past manual');
+    expect(deliveryBody(0).text).not.toContain('Google past-google');
+
+    fetchMock.mockClear();
+    await processTelegramUpdate(telegramUpdate('/focus M2'), 'https://example.com');
+
+    expect((await getUser('owner'))?.focusEventId).toBe('today');
+  });
+
+  it('gives add and sync guidance when every tracked event is already past', async () => {
+    await seedLinkedUser({
+      events: [{ ...manualEvent('past', 'Past manual'), date: '2000-01-01' }],
+      selectedEventIds: ['past-google'],
+      cachedCalEvents: [{ ...googleEvent('past-google'), date: '2000-01-01' }],
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
+
+    expect(deliveryBody(0).text).toBe(
+      '<b>No upcoming tracked events</b>\nAdd one with <code>/add Event name</code>, or refresh Google Calendar with <code>/sync</code>.',
+    );
   });
 
   it('refuses to create a share link that would already be expired', async () => {

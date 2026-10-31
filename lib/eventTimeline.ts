@@ -1,4 +1,8 @@
-import type { CalendarEvent, ManualEvent } from './userSchema';
+import type { CalendarEvent, EventCategory, ManualEvent } from './userSchema';
+
+export interface CategorizedCalendarEvent extends CalendarEvent {
+  category: EventCategory;
+}
 
 export interface TimelineEvent {
   id: string;
@@ -6,13 +10,67 @@ export interface TimelineEvent {
   name: string;
   date: string;
   source: 'manual' | 'google';
-  category: string;
+  category: EventCategory;
+  recurrence?: ManualEvent['recurrence'];
+}
+
+/**
+ * Returns the next visible event for every tracked record without changing
+ * the user's stored event list or reference numbering.
+ */
+export function buildUpcomingEventTimeline(
+  manual: ManualEvent[],
+  google: CategorizedCalendarEvent[],
+  selectedGoogleIds: string[],
+  from: string,
+): TimelineEvent[] {
+  const selected = new Set(selectedGoogleIds);
+  const output: TimelineEvent[] = manual.flatMap((event, index) => {
+    const date =
+      event.recurrence && event.recurrence !== 'none'
+        ? nextOccurrenceOnOrAfter(event, from)
+        : event.date >= from
+          ? event.date
+          : null;
+
+    return date
+      ? [
+          {
+            id: event.id,
+            stableRef: `M${index + 1}`,
+            name: event.name,
+            date,
+            source: 'manual' as const,
+            category: event.category ?? 'general',
+            recurrence: event.recurrence,
+          },
+        ]
+      : [];
+  });
+
+  google.forEach((event) => {
+    const selectedGoogleIndex = selectedGoogleIds.indexOf(event.id);
+
+    if (!selected.has(event.id) || event.date < from) return;
+    output.push({
+      id: event.id,
+      stableRef: `G${selectedGoogleIndex + 1}`,
+      name: event.name,
+      date: event.date,
+      source: 'google',
+      category: event.category,
+    });
+  });
+
+  return output.sort(
+    (a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name),
+  );
 }
 
 /** Expands manual recurrence deterministically without mutating stored definitions. */
 export function buildEventTimeline(
   manual: ManualEvent[],
-  google: CalendarEvent[],
+  google: CategorizedCalendarEvent[],
   selectedGoogleIds: string[],
   from: string,
   to: string,
@@ -26,6 +84,7 @@ export function buildEventTimeline(
       date,
       source: 'manual' as const,
       category: event.category ?? 'general',
+      recurrence: event.recurrence,
     })),
   );
 
@@ -40,7 +99,7 @@ export function buildEventTimeline(
         name: event.name,
         date: event.date,
         source: 'google',
-        category: (event as CalendarEvent & { category?: string }).category ?? 'general',
+        category: event.category,
       });
     }
   });

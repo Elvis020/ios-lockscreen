@@ -57,7 +57,11 @@ import {
   isValidTimeZone,
   normalizeEventName,
 } from './validation';
-import { buildEventTimeline } from './eventTimeline';
+import {
+  buildEventTimeline,
+  buildUpcomingEventTimeline,
+  type CategorizedCalendarEvent,
+} from './eventTimeline';
 import type { UserData } from './userSchema';
 import {
   createStudioDraft,
@@ -1194,18 +1198,36 @@ async function runLinkedTelegramCommand(
       };
     }
 
+    const events = buildUpcomingEventTimeline(
+      user.events,
+      user.cachedCalEvents.map((event): CategorizedCalendarEvent => ({
+        ...event,
+        category: user.googleCategoryOverrides?.[event.id] ?? 'general',
+      })),
+      user.selectedEventIds,
+      localDate(user.timeZone),
+    );
+
+    if (!events.length) {
+      return {
+        reply: htmlReply(
+          [
+            '<b>No upcoming tracked events</b>',
+            'Add one with <code>/add Event name</code>, or refresh Google Calendar with <code>/sync</code>.',
+          ].join('\n'),
+        ),
+        completionCommitted: false,
+      };
+    }
+
     return {
       reply: htmlReply(
         [
-          '<b>Tracked events</b>',
+          '<b>Upcoming tracked events</b>',
           '',
-          ...user.events.map(
-            (event, index) =>
-              `M${index + 1}. <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)} <i>${escapeTelegramHtml(event.category ?? 'general')}</i>${event.recurrence && event.recurrence !== 'none' ? ` · ${event.recurrence}` : ''}`,
-          ),
-          ...selectedGoogleEvents(user).map(
-            (event, index) =>
-              `G${index + 1}. <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)} <i>${escapeTelegramHtml(user.googleCategoryOverrides?.[event.id] ?? 'general')}</i>`,
+          ...events.map(
+            (event) =>
+              `${event.stableRef}. <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)} <i>${escapeTelegramHtml(event.category)}</i>${event.recurrence && event.recurrence !== 'none' ? ` · ${event.recurrence}` : ''}`,
           ),
           '',
           'Edit one with <code>/edit</code> or delete one with <code>/delete NUMBER</code>.',
@@ -1225,7 +1247,7 @@ async function runLinkedTelegramCommand(
     endDate.setUTCDate(endDate.getUTCDate() + (command === '/week' ? 6 : 0));
     const events = buildEventTimeline(
       user.events,
-      selectedGoogleEvents(user).map((event) => ({
+      selectedGoogleEvents(user).map((event): CategorizedCalendarEvent => ({
         ...event,
         category: user.googleCategoryOverrides?.[event.id] ?? 'general',
       })),
@@ -1275,8 +1297,8 @@ async function runLinkedTelegramCommand(
         reply: usageReply('Choose a focus event', '/focus M1|G1|off'),
         completionCommitted: false,
       };
-    const source = match[1] === 'M' ? user.events : selectedGoogleEvents(user);
-    const event = source[Number(match[2]) - 1];
+    const source = match[1] as EventReferenceSource;
+    const event = eventForReference(user, source, Number(match[2]));
 
     if (!event)
       return {
@@ -1313,10 +1335,10 @@ async function runLinkedTelegramCommand(
         completionCommitted: false,
       };
     }
-    const list = match[1] === 'M' ? user.events : selectedGoogleEvents(user);
-    const event = list[Number(match[2]) - 1];
+    const source = match[1] as EventReferenceSource;
+    const event = eventForReference(user, source, Number(match[2]));
 
-    if (!event || (command === '/repeat' && match[1] !== 'M')) {
+    if (!event || (command === '/repeat' && source !== 'M')) {
       return {
         reply: usageReply(
           command === '/repeat' ? 'Only manual events repeat' : 'Choose a tracked event',
@@ -1545,8 +1567,8 @@ async function runLinkedTelegramCommand(
         reply: usageReply('Share a countdown', '/share M1|G1'),
         completionCommitted: false,
       };
-    const list = match[1] === 'M' ? user.events : selectedGoogleEvents(user);
-    const event = list[Number(match[2]) - 1];
+    const source = match[1] as EventReferenceSource;
+    const event = eventForReference(user, source, Number(match[2]));
 
     if (!event)
       return {
@@ -2181,6 +2203,23 @@ function selectedGoogleEvents(user: UserData): UserData['cachedCalEvents'] {
 
     return event ? [event] : [];
   });
+}
+
+type EventReferenceSource = 'M' | 'G';
+
+/** Resolves a displayed reference without collapsing missing selected Google IDs. */
+function eventForReference(
+  user: UserData,
+  source: EventReferenceSource,
+  referenceNumber: number,
+): UserData['events'][number] | UserData['cachedCalEvents'][number] | undefined {
+  if (source === 'M') return user.events[referenceNumber - 1];
+
+  const selectedId = user.selectedEventIds[referenceNumber - 1];
+
+  return selectedId
+    ? user.cachedCalEvents.find((event) => event.id === selectedId)
+    : undefined;
 }
 
 function onboardingReply(origin: string, created: boolean): TelegramReply {

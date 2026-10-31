@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildUpcomingEventTimeline,
   buildEventTimeline,
   expandManualEvent,
   nextOccurrenceOnOrAfter,
 } from '../lib/eventTimeline';
+import type { CategorizedCalendarEvent } from '../lib/eventTimeline';
 import type { ManualEvent } from '../lib/userSchema';
 
 describe('event timeline', () => {
@@ -31,16 +33,16 @@ describe('event timeline', () => {
           id: 'later-selected',
           name: 'Second ref',
           date: '2026-11-02',
-          source: 'google',
           category: 'travel',
-        } as never,
+          accountEmail: 'ada@example.com',
+        },
         {
           id: 'first-selected',
           name: 'First ref',
           date: '2026-11-01',
-          source: 'google',
           category: 'work',
-        } as never,
+          accountEmail: 'ada@example.com',
+        },
       ],
       ['first-selected', 'later-selected'],
       '2026-11-01',
@@ -57,6 +59,46 @@ describe('event timeline', () => {
         id: 'later-selected',
         stableRef: 'G2',
         category: 'travel',
+      }),
+    ]);
+  });
+
+  it('projects only upcoming events while preserving canonical references', () => {
+    const timeline = buildUpcomingEventTimeline(
+      [
+        { ...manualEvent('2026-10-30', 'none'), id: 'past-manual', name: 'Past manual' },
+        { ...manualEvent('2026-10-31', 'weekly'), id: 'weekly', name: 'Weekly' },
+      ],
+      [
+        {
+          id: 'past-google',
+          name: 'Past Google',
+          date: '2026-10-30',
+          accountEmail: 'ada@example.com',
+          category: 'general',
+        },
+        {
+          id: 'future-google',
+          name: 'Future Google',
+          date: '2026-11-02',
+          accountEmail: 'ada@example.com',
+          category: 'general',
+        },
+      ] satisfies CategorizedCalendarEvent[],
+      ['past-google', 'future-google'],
+      '2026-11-01',
+    );
+
+    expect(timeline).toEqual([
+      expect.objectContaining({
+        id: 'future-google',
+        stableRef: 'G2',
+        date: '2026-11-02',
+      }),
+      expect.objectContaining({
+        id: 'weekly',
+        stableRef: 'M2',
+        date: '2026-11-07',
       }),
     ]);
   });
