@@ -7,6 +7,7 @@ let failure: Error | undefined;
 let batch: {
   calendarCount: number;
   events: UserData['cachedCalEvents'];
+  idAliases: Record<string, string>;
   windowEnd: string;
   windowStart: string;
 };
@@ -19,6 +20,7 @@ describe('Google sync status', () => {
     batch = {
       calendarCount: 2,
       events: [],
+      idAliases: {},
       windowStart: '2026-10-26',
       windowEnd: '2027-10-26',
     };
@@ -111,6 +113,44 @@ describe('Google sync status', () => {
       trackedEventCount: 1,
       upcomingTrackedEvents: [{ date: '2026-11-02', name: 'Design review' }],
     });
+  });
+
+  it('migrates selected Google occurrence metadata to the current series ID', async () => {
+    const legacyId = 'account:instance-1';
+    const stableId = 'g2:account:calendar:series:stable';
+    const event = googleEvent(stableId);
+
+    batch.events = [event];
+    batch.idAliases = { [legacyId]: stableId };
+    await redis.set(
+      'user:owner',
+      userRecord({
+        googleAccounts: [googleAccount()],
+        selectedEventIds: [legacyId, legacyId],
+        focusEventId: legacyId,
+        googleCategoryOverrides: { [legacyId]: 'work' },
+        sharedCountdowns: [
+          {
+            id: 'share',
+            eventId: legacyId,
+            key: 'share-key',
+            createdAt: '2026-10-26T00:00:00.000Z',
+          },
+        ],
+      }),
+    );
+    const { syncGoogleEvents } = await import('../lib/calendar/service');
+
+    await expect(syncGoogleEvents('owner')).resolves.toMatchObject({ status: 'ready' });
+
+    const updated = await redis.get<UserData>('user:owner');
+
+    expect(updated).toMatchObject({
+      selectedEventIds: [stableId],
+      focusEventId: stableId,
+      googleCategoryOverrides: { [stableId]: 'work' },
+    });
+    expect(updated?.sharedCountdowns?.[0]?.eventId).toBe(stableId);
   });
 });
 

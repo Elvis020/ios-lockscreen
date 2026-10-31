@@ -104,6 +104,24 @@ describe('Telegram control panel', () => {
     });
   });
 
+  it('makes a selection-raced Google sync safely retryable in Telegram', async () => {
+    await seedLinkedUser();
+    const initData = await signedInitData(42);
+    const service = await import('../lib/calendar/service');
+
+    vi.spyOn(service, 'syncGoogleEvents').mockRejectedValue(
+      new Error('Google selections changed during sync; please retry'),
+    );
+    const { default: handler } = await import('../api/telegram/app');
+    const response = await handler(appRequest({ action: 'sync-google', initData }));
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        'Your Google selection was saved. Please sync Google Calendar again to refresh the list.',
+    });
+  });
+
   it('rejects cross-origin mutations before reading Telegram data', async () => {
     const { default: handler } = await import('../api/telegram/app');
     const request = appRequest({ action: 'bootstrap', initData: 'forged' });
@@ -247,6 +265,80 @@ describe('Telegram control panel', () => {
     expect(html).toContain('return false;');
     expect(html).toContain("if (added) byId('eventForm').reset();");
     expect(html).toContain('telegram.openLink(result.handoffUrl)');
+  });
+
+  it('uses combined Google capacity, deduplicates submissions, and renders local save controls', async () => {
+    const user = userRecord();
+
+    user.events = Array.from({ length: 6 }, (_, index) => ({
+      id: `manual-${index}`,
+      name: `Manual ${index}`,
+      date: '2026-11-10',
+      source: 'manual' as const,
+      createdAt: '2026-10-26T00:00:00.000Z',
+      category: 'general' as const,
+      recurrence: 'none' as const,
+    }));
+    user.cachedCalEvents = [
+      {
+        id: 'g2:account:calendar:event:one',
+        name: 'One',
+        date: '2026-11-11',
+        accountEmail: 'ada@example.com',
+        recurring: true,
+      },
+      {
+        id: 'g2:account:calendar:event:two',
+        name: 'Two',
+        date: '2026-11-12',
+        accountEmail: 'ada@example.com',
+      },
+    ];
+    await redis.set('user:owner', user);
+    await redis.set('telegram:user:42', 'owner');
+    const initData = await signedInitData(42);
+    const { default: handler } = await import('../api/telegram/app');
+
+    const bootstrap = await handler(appRequest({ action: 'bootstrap', initData }));
+    const state = (await bootstrap.json()) as {
+      google: { manualCount: number; selectionLimit: number; events: unknown[] };
+    };
+
+    expect(state.google).toMatchObject({ manualCount: 6, selectionLimit: 1 });
+    expect(state.google.events).toHaveLength(2);
+
+    const overCapacity = await handler(
+      appRequest({
+        action: 'select-google',
+        initData,
+        payload: {
+          eventIds: [
+            'g2:account:calendar:event:one',
+            'g2:account:calendar:event:one',
+            'g2:account:calendar:event:two',
+          ],
+        },
+      }),
+    );
+
+    expect(overCapacity.status).toBe(400);
+    await expect(overCapacity.json()).resolves.toEqual({
+      error: 'You have 6 manual events, so choose up to 1 Google event.',
+    });
+
+    const html = await (
+      await handler(new Request('https://example.com/api/telegram/app'))
+    ).text();
+
+    expect(html).toContain('googleSelectionBar');
+    expect(html).toContain('Save 0 selected events');
+    expect(html).toContain('googleSelectionStatus');
+    expect(html).toContain("'Repeats · next '");
+    expect(html).toContain('await loadPreview()');
+    expect(html).toContain('finally {');
+    expect(html).toContain(
+      "const next = await request('sync-google');\n          googleSelection = null;",
+    );
   });
 });
 

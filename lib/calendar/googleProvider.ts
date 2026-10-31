@@ -21,6 +21,7 @@ interface GoogleEventsResponse {
   nextPageToken?: string;
   items?: Array<{
     id?: string;
+    recurringEventId?: string;
     summary?: string;
     start?: { date?: string; dateTime?: string };
     organizer?: { displayName?: string };
@@ -112,6 +113,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
     accountId: string,
     accountEmail: string,
     timeZone: string,
+    selectedEventIds: string[] = [],
   ): Promise<CalendarSyncBatch> {
     const accessToken = await refreshAccessToken(encryptedRefreshToken);
     const now = new Date();
@@ -120,6 +122,8 @@ export class GoogleCalendarProvider implements CalendarProvider {
     end.setUTCFullYear(end.getUTCFullYear() + 1);
     const calendars = await listVisibleCalendars(accessToken);
     const events: CalendarEvent[] = [];
+    const idAliases: Record<string, string> = {};
+    const selectedIds = new Set(selectedEventIds);
 
     for (const calendar of calendars) {
       events.push(
@@ -131,6 +135,8 @@ export class GoogleCalendarProvider implements CalendarProvider {
           end,
           now,
           timeZone,
+          selectedIds,
+          idAliases,
         })),
       );
     }
@@ -143,6 +149,7 @@ export class GoogleCalendarProvider implements CalendarProvider {
     return {
       calendarCount: calendars.length,
       events,
+      idAliases,
       windowStart: now.toISOString().slice(0, 10),
       windowEnd: end.toISOString().slice(0, 10),
     };
@@ -216,8 +223,20 @@ async function listCalendarEvents(options: {
   end: Date;
   now: Date;
   timeZone: string;
+  selectedIds: Set<string>;
+  idAliases: Record<string, string>;
 }): Promise<CalendarEvent[]> {
-  const { accessToken, accountEmail, accountId, calendar, end, now, timeZone } = options;
+  const {
+    accessToken,
+    accountEmail,
+    accountId,
+    calendar,
+    end,
+    now,
+    timeZone,
+    selectedIds,
+    idAliases,
+  } = options;
   const params = new URLSearchParams({
     singleEvents: 'true',
     orderBy: 'startTime',
@@ -226,8 +245,8 @@ async function listCalendarEvents(options: {
     timeMax: end.toISOString(),
     timeZone,
   });
-  const events: CalendarEvent[] = [];
-  const calendarKey = calendar.primary ? null : await shortHash(calendar.id);
+  const events = new Map<string, CalendarEvent>();
+  const calendarKey = await shortHash(calendar.id);
   const calendarName = (
     calendar.summaryOverride ??
     calendar.summary ??
@@ -257,32 +276,43 @@ async function listCalendarEvents(options: {
 
     const payload = (await response.json()) as GoogleEventsResponse;
 
-    events.push(
-      ...(payload.items ?? []).flatMap((event) => {
-        const date = event.start?.date ?? event.start?.dateTime?.slice(0, 10);
+    for (const event of payload.items ?? []) {
+      const date = event.start?.date ?? event.start?.dateTime?.slice(0, 10);
 
-        if (!event.id || !date) {
-          return [];
-        }
+      if (!event.id || !date) {
+        continue;
+      }
 
-        return [
-          {
-            id: calendarKey
-              ? `${accountId}:${calendarKey}:${event.id}`
-              : `${accountId}:${event.id}`,
-            name: (event.summary ?? 'Untitled event').slice(0, 50),
-            date,
-            accountEmail,
-            calendarName,
-          },
-        ];
-      }),
-    );
+      const recurring = Boolean(event.recurringEventId);
+      const providerKey = event.recurringEventId ?? event.id;
+      const stableId = `g2:${accountId}:${calendarKey}:${recurring ? 'series' : 'event'}:${await shortHash(providerKey)}`;
+      const legacyId = calendar.primary
+        ? `${accountId}:${event.id}`
+        : `${accountId}:${calendarKey}:${event.id}`;
+
+      if (selectedIds.has(legacyId)) {
+        idAliases[legacyId] = stableId;
+      }
+
+      const candidate: CalendarEvent = {
+        id: stableId,
+        name: (event.summary ?? 'Untitled event').slice(0, 50),
+        date,
+        accountEmail,
+        calendarName,
+        recurring,
+      };
+      const existing = events.get(stableId);
+
+      if (!existing || candidate.date < existing.date) {
+        events.set(stableId, candidate);
+      }
+    }
 
     nextPageToken = payload.nextPageToken;
 
     if (!nextPageToken) {
-      return events;
+      return [...events.values()];
     }
   }
 

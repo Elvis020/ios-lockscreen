@@ -980,7 +980,9 @@ export async function updateCachedCalEvents(
   token: string,
   events: CalendarEvent[],
   expectedGoogleAccountRevision: string,
+  expectedGoogleSelectionRevision: number,
   completion?: MutationCompletion,
+  idAliases: Record<string, string> = {},
 ): Promise<UserData | null> {
   return mutateUser(
     token,
@@ -989,21 +991,50 @@ export async function updateCachedCalEvents(
         throw new Error('Google accounts changed during sync; please retry');
       }
 
+      if ((user.googleSelectionRevision ?? 0) !== expectedGoogleSelectionRevision) {
+        throw new Error('Google selections changed during sync; please retry');
+      }
+
       const accountEmails = new Set(user.googleAccounts.map(({ email }) => email));
       const availableEvents = events.filter(({ accountEmail }) =>
         accountEmails.has(accountEmail),
       );
 
+      migrateGoogleEventIds(user, idAliases);
+
       user.cachedCalEvents = availableEvents;
       user.cachedCalAt = Date.now();
       const availableIds = new Set(availableEvents.map(({ id }) => id));
 
-      user.selectedEventIds = user.selectedEventIds.filter((id) => availableIds.has(id));
+      user.selectedEventIds = [...new Set(user.selectedEventIds)].filter((id) =>
+        availableIds.has(id),
+      );
 
       return pruneEventMetadata(user);
     },
     completion,
   );
+}
+
+function migrateGoogleEventIds(user: UserData, idAliases: Record<string, string>): void {
+  const replace = (id: string): string => idAliases[id] ?? id;
+
+  user.selectedEventIds = [...new Set(user.selectedEventIds.map(replace))];
+
+  if (user.focusEventId) {
+    user.focusEventId = replace(user.focusEventId);
+  }
+
+  user.googleCategoryOverrides = Object.fromEntries(
+    Object.entries(user.googleCategoryOverrides ?? {}).map(([id, category]) => [
+      replace(id),
+      category,
+    ]),
+  );
+  user.sharedCountdowns = (user.sharedCountdowns ?? []).map((share) => ({
+    ...share,
+    eventId: replace(share.eventId),
+  }));
 }
 
 export function googleAccountRevision(accounts: GoogleAccount[]): string {
@@ -1019,17 +1050,25 @@ export async function updateSelectedEvents(
   eventIds: string[],
 ): Promise<UserData | null> {
   return mutateUser(token, (user) => {
+    const selectedEventIds = [...new Set(eventIds)];
     const availableIds = new Set(user.cachedCalEvents.map(({ id }) => id));
 
-    if (eventIds.some((id) => !availableIds.has(id))) {
+    if (selectedEventIds.some((id) => !availableIds.has(id))) {
       throw new Error('One or more calendar events are unavailable');
     }
 
-    if (user.events.length + eventIds.length > 7) {
-      throw new Error('Maximum 7 tracked events allowed');
+    const selectionLimit = Math.max(0, 7 - user.events.length);
+
+    if (selectedEventIds.length > selectionLimit) {
+      const eventLabel = selectionLimit === 1 ? 'event' : 'events';
+
+      throw new Error(
+        `You have ${user.events.length} manual events, so choose up to ${selectionLimit} Google ${eventLabel}.`,
+      );
     }
 
-    user.selectedEventIds = [...new Set(eventIds)];
+    user.selectedEventIds = selectedEventIds;
+    user.googleSelectionRevision = (user.googleSelectionRevision ?? 0) + 1;
 
     return pruneEventMetadata(user);
   });

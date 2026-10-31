@@ -22,7 +22,8 @@ export function apiErrorResponse(error: unknown, context: string): Response {
 
   if (
     error instanceof Error &&
-    error.message === 'Google accounts changed during sync; please retry'
+    (error.message === 'Google accounts changed during sync; please retry' ||
+      error.message === 'Google selections changed during sync; please retry')
   ) {
     return jsonResponse({ error: error.message }, 409);
   }
@@ -51,6 +52,7 @@ export function apiErrorResponse(error: unknown, context: string): Response {
 function isSafeClientError(message: string): boolean {
   return (
     message.startsWith('Maximum ') ||
+    message.startsWith('You have ') ||
     message === 'Event not found' ||
     message === 'Unknown theme' ||
     message === 'Built-in theme names are reserved' ||

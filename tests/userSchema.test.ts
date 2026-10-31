@@ -77,6 +77,26 @@ describe('normalizeUserData', () => {
     expect(user?.events[0]).toMatchObject({ category: 'general', recurrence: 'none' });
   });
 
+  it('preserves recurrence metadata for cached Google series without a schema bump', () => {
+    const user = normalizeUserData(
+      {
+        cachedCalEvents: [
+          {
+            id: 'g2:account:calendar:series:event',
+            name: 'Payday',
+            date: '2026-12-01',
+            accountEmail: 'ada@example.com',
+            recurring: true,
+          },
+        ],
+      },
+      'owner',
+    );
+
+    expect(user?.schemaVersion).toBe(5);
+    expect(user?.cachedCalEvents[0]?.recurring).toBe(true);
+  });
+
   it('preserves a custom profile theme while leaving absent slots unset', () => {
     const user = normalizeUserData(
       {

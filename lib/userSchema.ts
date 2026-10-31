@@ -80,6 +80,7 @@ export interface CalendarEvent {
   date: string;
   accountEmail: string;
   calendarName?: string;
+  recurring?: boolean;
 }
 
 export interface TelegramLink {
@@ -103,6 +104,7 @@ export interface UserData {
   customThemes: WallpaperTheme[];
   events: ManualEvent[];
   googleAccounts: GoogleAccount[];
+  googleSelectionRevision?: number;
   selectedEventIds: string[];
   cachedCalEvents: CalendarEvent[];
   cachedCalAt: number;
@@ -154,6 +156,12 @@ export function normalizeUserData(raw: unknown, token: string): UserData | null 
     customThemes,
     events: normalizeManualEvents(record.events),
     googleAccounts: normalizeGoogleAccounts(record.googleAccounts),
+    googleSelectionRevision:
+      typeof record.googleSelectionRevision === 'number' &&
+      Number.isSafeInteger(record.googleSelectionRevision) &&
+      record.googleSelectionRevision >= 0
+        ? record.googleSelectionRevision
+        : 0,
     selectedEventIds: normalizeStringArray(record.selectedEventIds),
     cachedCalEvents: normalizeCalendarEvents(record.cachedCalEvents),
     cachedCalAt:
@@ -427,6 +435,7 @@ function normalizeCalendarEvents(value: unknown): CalendarEvent[] {
         accountEmail: event.accountEmail,
         calendarName:
           typeof event.calendarName === 'string' ? event.calendarName : undefined,
+        ...(event.recurring === true ? { recurring: true } : {}),
       },
     ];
   });

@@ -159,8 +159,10 @@ export async function syncGoogleEvents(
   }
 
   const events = [];
+  const idAliases: Record<string, string> = {};
   let calendarCount = 0;
   const accountRevision = googleAccountRevision(user.googleAccounts);
+  const selectionRevision = user.googleSelectionRevision ?? 0;
 
   for (const account of user.googleAccounts) {
     if (!account.encryptedRefreshToken) {
@@ -172,13 +174,22 @@ export async function syncGoogleEvents(
       account.id,
       account.email,
       user.timeZone,
+      user.selectedEventIds.slice(0, 7),
     );
 
     calendarCount += batch.calendarCount;
     events.push(...batch.events);
+    Object.assign(idAliases, batch.idAliases);
   }
 
-  await updateCachedCalEvents(token, events, accountRevision, completion);
+  await updateCachedCalEvents(
+    token,
+    events,
+    accountRevision,
+    selectionRevision,
+    completion,
+    idAliases,
+  );
 
   const updated = await getUser(token);
 

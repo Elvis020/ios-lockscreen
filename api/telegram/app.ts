@@ -165,10 +165,9 @@ export default async function handler(req: Request): Promise<Response> {
 
       if (
         !Array.isArray(eventIds) ||
-        eventIds.length > 7 ||
         !eventIds.every((eventId) => typeof eventId === 'string' && eventId.length <= 160)
       ) {
-        return jsonResponse({ error: 'Choose up to seven Google events' }, 400);
+        return jsonResponse({ error: 'Choose valid Google events' }, 400);
       }
 
       await updateSelectedEvents(account.token, eventIds);
@@ -272,6 +271,19 @@ export default async function handler(req: Request): Promise<Response> {
       );
     }
 
+    if (
+      error instanceof Error &&
+      error.message === 'Google selections changed during sync; please retry'
+    ) {
+      return jsonResponse(
+        {
+          error:
+            'Your Google selection was saved. Please sync Google Calendar again to refresh the list.',
+        },
+        409,
+      );
+    }
+
     return apiErrorResponse(error, 'Telegram control panel request failed');
   }
 }
@@ -357,6 +369,7 @@ async function readRefreshedState(token: string): Promise<ReturnType<typeof appS
 
 function appState(user: UserData) {
   const selected = new Set(user.selectedEventIds);
+  const manualCount = user.events.length;
   const shortcutUrl = publicShortcutUrl();
 
   return {
@@ -378,8 +391,11 @@ function appState(user: UserData) {
         date: event.date,
         id: event.id,
         name: event.name,
+        recurring: event.recurring === true,
         selected: selected.has(event.id),
       })),
+      manualCount,
+      selectionLimit: Math.max(0, 7 - manualCount),
       trackedCount: user.selectedEventIds.length,
     },
     manualEvents: user.events.map(({ id, name, date }) => ({ id, name, date })),
@@ -624,9 +640,14 @@ function appPage(nonce: string): string {
     .event-copy strong, .event-copy span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .event-copy span { color: var(--muted); font-size: 12px; }
     .check { display: flex; align-items: center; gap: 10px; }
+    .check.checked { border-color: color-mix(in srgb, var(--accent) 60%, var(--border)); background: #262626; }
     .check input { width: 20px; min-height: 20px; flex: 0 0 auto; accent-color: var(--accent); }
     .status { min-height: 20px; margin: 10px 0 0; color: var(--muted); font-size: 13px; transition: color 180ms var(--ease); }
     .status.error { color: var(--danger); }
+    .google-selection-bar { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: #1C1C1C; }
+    .google-selection-copy { flex: 1; color: var(--muted); font-size: 12px; }
+    .google-selection-status { width: 100%; min-height: 18px; margin: 0; color: var(--muted); font-size: 12px; }
+    .google-selection-status.error { color: var(--danger); }
     .hidden { display: none !important; }
     @keyframes enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
     @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; } }
@@ -683,8 +704,12 @@ function appPage(nonce: string): string {
               <button id="googleConnect" class="button secondary" type="button">Connect Google</button>
               <button id="googleSync" class="button secondary" type="button">Sync now</button>
             </div>
+            <div id="googleSelectionBar" class="google-selection-bar hidden">
+              <span id="googleSelectionCopy" class="google-selection-copy"></span>
+              <button id="saveGoogle" class="button primary" type="button">Save 0 selected events</button>
+              <p id="googleSelectionStatus" class="google-selection-status" role="status" aria-live="polite"></p>
+            </div>
             <div id="googleEvents" class="event-list"></div>
-            <button id="saveGoogle" class="button primary hidden" type="button">Use selected events</button>
           </div>
         </details>
 
@@ -721,6 +746,8 @@ function appPage(nonce: string): string {
       let state = null;
       let previewUrl = null;
       let previewRetryTimer = null;
+      let googleSelection = null;
+      let googleSaving = false;
       const byId = (id) => document.getElementById(id);
 
       if (telegram) {
@@ -868,6 +895,7 @@ function appPage(nonce: string): string {
         byId('googleSummary').textContent = google.connected ? (google.events.length ? google.events.length + ' upcoming events found. Choose what belongs on the wallpaper.' : 'Connected. Sync to look for upcoming events across your visible calendars.') : 'Connect Google Calendar after your first preview, or keep adding events manually.';
         const list = byId('googleEvents');
         list.replaceChildren();
+        const selectedIds = new Set(googleSelection || google.events.filter((event) => event.selected).map((event) => event.id));
 
         google.events.forEach((event) => {
           const label = document.createElement('label');
@@ -880,15 +908,26 @@ function appPage(nonce: string): string {
 
           input.type = 'checkbox';
           input.value = event.id;
-          input.checked = event.selected;
+          input.checked = selectedIds.has(event.id);
+          input.disabled = googleSaving || (!input.checked && selectedIds.size >= google.selectionLimit);
           name.textContent = event.name;
-          meta.textContent = event.date + ' · ' + event.calendarName;
+          meta.textContent = event.recurring ? 'Repeats · next ' + event.date + ' · ' + event.calendarName : event.date + ' · ' + event.calendarName;
           copy.append(name, meta);
           label.append(input, copy);
+          label.classList.toggle('checked', input.checked);
+          input.addEventListener('change', () => {
+            googleSelection = Array.from(list.querySelectorAll('input:checked')).map((item) => item.value);
+            renderGoogle(google);
+          });
           list.appendChild(label);
         });
 
-        byId('saveGoogle').classList.toggle('hidden', !google.events.length);
+        const bar = byId('googleSelectionBar');
+        const save = byId('saveGoogle');
+        bar.classList.toggle('hidden', !google.events.length);
+        byId('googleSelectionCopy').textContent = selectedIds.size + ' of ' + google.selectionLimit + ' Google slots selected · ' + google.manualCount + ' manual';
+        save.textContent = 'Save ' + selectedIds.size + ' selected events';
+        save.disabled = googleSaving;
       }
 
       async function mutate(action, payload, success) {
@@ -933,6 +972,7 @@ function appPage(nonce: string): string {
         try {
           setStatus('Checking your visible Google calendars…');
           const next = await request('sync-google');
+          googleSelection = null;
           render(next);
           byId('googlePanel').open = true;
           setStatus(syncMessage(next.sync));
@@ -952,9 +992,51 @@ function appPage(nonce: string): string {
         }
       });
 
-      byId('saveGoogle').addEventListener('click', () => {
-        const eventIds = Array.from(byId('googleEvents').querySelectorAll('input:checked')).map((input) => input.value);
-        mutate('select-google', { eventIds }, 'Google events updated on your wallpaper.');
+      byId('saveGoogle').addEventListener('click', async () => {
+        if (!state || googleSaving) return;
+        const eventIds = googleSelection || Array.from(byId('googleEvents').querySelectorAll('input:checked')).map((input) => input.value);
+
+        googleSaving = true;
+        byId('googleSelectionStatus').textContent = 'Saving…';
+        byId('googleSelectionStatus').classList.remove('error');
+        renderGoogle(state.google);
+
+        try {
+          const next = await request('select-google', { eventIds });
+
+          googleSelection = null;
+          render(next);
+
+          try {
+            const previewUpdated = await loadPreview();
+
+            byId('googleSelectionStatus').textContent = previewUpdated
+              ? 'Google events saved. Preview updated.'
+              : 'Google events saved. Preview will update shortly.';
+          } catch {
+            byId('googleSelectionStatus').textContent =
+              'Google events saved. Preview will update shortly.';
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Could not save Google events';
+          const draftIds = eventIds;
+
+          try {
+            const refreshed = await request('bootstrap');
+            const availableIds = new Set(refreshed.google.events.map((event) => event.id));
+
+            googleSelection = draftIds.filter((id) => availableIds.has(id));
+            render(refreshed);
+          } catch {
+            renderGoogle(state.google);
+          }
+
+          byId('googleSelectionStatus').textContent = message;
+          byId('googleSelectionStatus').classList.add('error');
+        } finally {
+          googleSaving = false;
+          if (state) renderGoogle(state.google);
+        }
       });
 
       byId('saveAppearance').addEventListener('click', () => mutate('save-appearance', {

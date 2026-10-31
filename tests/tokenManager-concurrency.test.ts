@@ -242,12 +242,46 @@ describe('token manager serialization', () => {
           },
         ],
         snapshot,
+        0,
       ),
     ).rejects.toThrow('Google accounts changed during sync; please retry');
 
     expect((await tokenManager.getUser('owner'))?.cachedCalEvents[0]?.name).toBe(
       'Existing',
     );
+  });
+
+  it('keeps an acknowledged selection when an older sync tries to replace the cache', async () => {
+    const account = {
+      id: 'stable-account',
+      email: 'ada@example.com',
+      encryptedRefreshToken: 'encrypted',
+      connectedAt: '2026-10-01T00:00:00.000Z',
+    };
+    const selected = calendarEvent('selected');
+
+    await redis.set('user:owner', {
+      ...userRecord('owner'),
+      googleAccounts: [account],
+      cachedCalEvents: [selected],
+    });
+    const accountRevision = tokenManager.googleAccountRevision([account]);
+
+    await tokenManager.updateSelectedEvents('owner', [selected.id]);
+
+    await expect(
+      tokenManager.updateCachedCalEvents(
+        'owner',
+        [calendarEvent('stale')],
+        accountRevision,
+        0,
+      ),
+    ).rejects.toThrow('Google selections changed during sync; please retry');
+
+    const user = await tokenManager.getUser('owner');
+
+    expect(user?.selectedEventIds).toEqual([selected.id]);
+    expect(user?.cachedCalEvents).toEqual([selected]);
   });
 
   it('commits a Google sync cache and completion marker only once', async () => {
@@ -273,12 +307,14 @@ describe('token manager serialization', () => {
       'owner',
       [calendarEvent('first')],
       revision,
+      0,
       completion,
     );
     await tokenManager.updateCachedCalEvents(
       'owner',
       [calendarEvent('retry')],
       revision,
+      0,
       completion,
     );
 

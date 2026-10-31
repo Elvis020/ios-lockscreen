@@ -15,6 +15,8 @@ export interface ConnectedGoogleAccount {
 export interface CalendarSyncBatch {
   calendarCount: number;
   events: CalendarEvent[];
+  /** Selected legacy occurrence IDs that can be safely migrated in this window. */
+  idAliases: Record<string, string>;
   windowEnd: string;
   windowStart: string;
 }
@@ -27,5 +29,6 @@ export interface CalendarProvider {
     accountId: string,
     accountEmail: string,
     timeZone: string,
+    selectedEventIds?: string[],
   ): Promise<CalendarSyncBatch>;
 }

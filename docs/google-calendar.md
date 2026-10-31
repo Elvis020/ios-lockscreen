@@ -35,8 +35,12 @@ node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"
 - A sync first reads Google Calendar's visible calendar list, then fetches the primary
   calendar and every other calendar marked as selected there.
 - Paginated results from each calendar are normalized, labeled with their calendar name,
-  merged, sorted, and cached in Redis. Sync is bounded to twenty visible calendars and a
-  one-year upcoming window.
+  merged, sorted, and cached in Redis. Recurring instances collapse into one selectable
+  series using its next actual occurrence (including moved exceptions); one-off events stay
+  separate. Stable, bounded IDs keep a selected series selected as its next instance changes.
+  Legacy occurrence selections are migrated only when their old ID appears in the current
+  sync window, so an expired occurrence can be pruned on a successful sync. Sync is bounded
+  to twenty visible calendars and a one-year upcoming window.
 - Only events selected in the web dashboard or Telegram control panel appear on the
   wallpaper.
 - `/sync` refreshes the cache from Telegram and reports the useful outcome rather than
