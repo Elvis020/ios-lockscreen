@@ -7,6 +7,8 @@ let fetchMock: ReturnType<typeof vi.fn>;
 
 describe('Telegram mutation idempotency', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-24T12:00:00Z'));
     vi.resetModules();
     redis = new InMemoryRedis();
     process.env.TELEGRAM_WEBHOOK_SECRET = 'webhook-secret';
@@ -20,6 +22,7 @@ describe('Telegram mutation idempotency', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     process.env = { ...originalEnvironment };
     vi.unstubAllGlobals();
     vi.restoreAllMocks();

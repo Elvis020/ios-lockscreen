@@ -122,6 +122,8 @@ themes or clock profiles does not reset it. The dashboard's **Events shown** set
 edits the same preference. Remaining events appear as `+N more`; all tracked events
 still mark the calendar. Changes appear on the next wallpaper refresh.
 
+One-time events remain through their scheduled day in your account timezone and are removed on the next local day. Recurring manual events advance automatically; recurring Google series remain selected and refresh to their next occurrence on sync. Expired one-time cached Google events are removed from tracking.
+
 Tracking itself is not capped. To keep Telegram messages compact, `/events`, `/today`,
 and `/week` show the next five matching events and link to **Manage events** for the
 complete list.

@@ -12,6 +12,7 @@ import {
   withRedisLock,
   withRedisLocks,
   type RedisFencedSet,
+  type RedisLease,
 } from './redisLock';
 import {
   normalizeUserData,
@@ -135,7 +136,10 @@ export async function provisionTelegramAccount(
         redis,
         `user:${mappedToken}`,
         async (userLease) => {
-          const user = await readUser(redis, mappedToken);
+          const user = await readUserWithCleanup(redis, mappedToken, [
+            telegramLease,
+            userLease,
+          ]);
 
           if (!user?.telegram || user.telegram.userId !== telegram.userId) {
             return null;
@@ -192,7 +196,14 @@ export async function provisionTelegramAccount(
 }
 
 export async function getUser(token: string): Promise<UserData | null> {
-  return readUser(getRedis(), token);
+  const redis = getRedis();
+  const user = await readUser(redis, token);
+
+  if (!user || !cleanupExpiredEvents(user).changed) return user;
+
+  return withRedisLock(redis, `user:${token}`, (lease) =>
+    readUserWithCleanup(redis, token, [lease]),
+  );
 }
 
 export async function getUserByWallpaperKey(
@@ -209,7 +220,7 @@ export async function ensureWallpaperKey(
   const redis = getRedis();
 
   return withRedisLock(redis, `user:${token}`, async (lease) => {
-    const user = await readUser(redis, token);
+    const user = await readUserWithCleanup(redis, token, [lease]);
 
     if (!user) {
       return null;
@@ -266,6 +277,8 @@ export async function saveTelegramDraftEvent(
     redis,
     [`user:${token}`, draftKey(draft.userId)],
     async (leases) => {
+      let user = await readUserWithCleanup(redis, token, leases);
+
       if (await redis.get(saveKey)) {
         if (completion) {
           await commitIfLeasesOwned(redis, leases, [
@@ -297,8 +310,6 @@ export async function saveTelegramDraftEvent(
         return 'stale';
       }
 
-      const user = await readUser(redis, token);
-
       if (!user) {
         throw new Error('Linked account no longer exists');
       }
@@ -323,6 +334,9 @@ export async function saveTelegramDraftEvent(
       const wallpaperKey = user.wallpaperKey ?? generateUUID();
 
       user.wallpaperKey = wallpaperKey;
+      const cleaned = cleanupExpiredEvents(user);
+
+      user = cleaned.user;
       const sets: RedisFencedSet[] = [
         { key: `user:${token}`, value: user },
         { key: `wallpaper:${wallpaperKey}`, value: token },
@@ -337,7 +351,10 @@ export async function saveTelegramDraftEvent(
         });
       }
 
-      await commitIfLeasesOwned(redis, leases, sets, [draftKey(draft.userId)]);
+      await commitIfLeasesOwned(redis, leases, sets, [
+        draftKey(draft.userId),
+        ...cleaned.deletes,
+      ]);
 
       return 'saved';
     },
@@ -359,6 +376,8 @@ export async function saveTelegramEditDraft(
     redis,
     [`user:${token}`, draftKey(draft.userId)],
     async (leases) => {
+      let user = await readUserWithCleanup(redis, token, leases);
+
       if (await redis.get(saveKey)) {
         if (completion) {
           await commitIfLeasesOwned(redis, leases, [
@@ -388,8 +407,6 @@ export async function saveTelegramEditDraft(
       }
 
       const original = active.original;
-
-      const user = await readUser(redis, token);
 
       if (
         !user ||
@@ -428,6 +445,9 @@ export async function saveTelegramEditDraft(
       const wallpaperKey = user.wallpaperKey ?? generateUUID();
 
       user.wallpaperKey = wallpaperKey;
+      const cleaned = cleanupExpiredEvents(user);
+
+      user = cleaned.user;
       const sets: RedisFencedSet[] = [
         { key: `user:${token}`, value: user },
         { key: `wallpaper:${wallpaperKey}`, value: token },
@@ -442,7 +462,10 @@ export async function saveTelegramEditDraft(
         });
       }
 
-      await commitIfLeasesOwned(redis, leases, sets, [draftKey(draft.userId)]);
+      await commitIfLeasesOwned(redis, leases, sets, [
+        draftKey(draft.userId),
+        ...cleaned.deletes,
+      ]);
 
       return 'saved';
     },
@@ -657,7 +680,7 @@ export async function createSharedCountdown(
   const redis = getRedis();
 
   return withRedisLock(redis, `user:${token}`, async (lease) => {
-    const user = await readUser(redis, token);
+    const user = await readUserWithCleanup(redis, token, [lease]);
 
     if (!user) return null;
     if (completion && (await redis.get(completion.key))) {
@@ -716,13 +739,13 @@ export async function createSharedCountdown(
   });
 }
 
-function currentCivilDate(timeZone: string): string {
+function currentCivilDate(timeZone: string, now = new Date()): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).formatToParts(new Date());
+  }).formatToParts(now);
   const value = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
 
   return `${value('year')}-${value('month')}-${value('day')}`;
@@ -736,7 +759,7 @@ export async function revokeSharedCountdown(
   const redis = getRedis();
 
   return withRedisLock(redis, `user:${token}`, async (lease) => {
-    const user = await readUser(redis, token);
+    const user = await readUserWithCleanup(redis, token, [lease]);
 
     if (!user) return null;
     if (completion && (await redis.get(completion.key))) return user;
@@ -828,7 +851,7 @@ export async function linkTelegramIdentity(
 
   return withRedisLock(redis, 'telegram:links', async (telegramLease) => {
     if (completion && (await redis.get(completion.key))) {
-      return readUser(redis, token);
+      return getUser(token);
     }
 
     if (linkCodeKey && (await redis.get<string>(linkCodeKey)) !== token) {
@@ -843,14 +866,19 @@ export async function linkTelegramIdentity(
     }
 
     return withRedisLocks(redis, resources, async (userLeases) => {
-      const user = await readUser(redis, token);
+      const user = await readUserWithCleanup(redis, token, [
+        telegramLease,
+        ...userLeases,
+      ]);
 
       if (!user) {
         return null;
       }
 
       const previouslyLinkedUser =
-        linkedToken && linkedToken !== token ? await readUser(redis, linkedToken) : null;
+        linkedToken && linkedToken !== token
+          ? await readUserWithCleanup(redis, linkedToken, [telegramLease, ...userLeases])
+          : null;
       const previousIdentity = user.telegram?.userId ?? user.telegram?.chatId;
       const previousChatId = user.telegram?.chatId;
       const sets: RedisFencedSet[] = [];
@@ -1071,7 +1099,7 @@ async function mutateUser(
   const redis = getRedis();
 
   return withRedisLock(redis, `user:${token}`, async (lease) => {
-    const user = await readUser(redis, token);
+    let user = await readUserWithCleanup(redis, token, [lease]);
 
     if (!user) {
       return null;
@@ -1085,6 +1113,10 @@ async function mutateUser(
 
     user.wallpaperKey = wallpaperKey;
     const deletes = mutation(user) ?? [];
+    const cleaned = cleanupExpiredEvents(user);
+
+    user = cleaned.user;
+    deletes.push(...cleaned.deletes);
 
     const sets: RedisFencedSet[] = [
       { key: `user:${token}`, value: user },
@@ -1125,6 +1157,72 @@ function pruneEventMetadata(user: UserData): string[] {
   );
 
   return staleShares.map(({ key }) => `share:${key}`);
+}
+
+/** Returns a cleaned copy without mutating the supplied account. */
+export function cleanupExpiredEvents(
+  user: UserData,
+  now = new Date(),
+): {
+  user: UserData;
+  changed: boolean;
+  deletes: string[];
+} {
+  const today = currentCivilDate(user.timeZone, now);
+  const expiredGoogleIds = new Set(
+    user.cachedCalEvents
+      .filter(({ date, recurring }) => recurring !== true && date < today)
+      .map(({ id }) => id),
+  );
+  const events = user.events.filter(
+    (event) => event.recurrence !== 'none' || event.date >= today,
+  );
+  const cachedCalEvents = user.cachedCalEvents.filter(
+    ({ date, recurring }) => recurring === true || date >= today,
+  );
+
+  if (
+    events.length === user.events.length &&
+    cachedCalEvents.length === user.cachedCalEvents.length
+  ) {
+    return { user, changed: false, deletes: [] };
+  }
+
+  const cleaned = structuredClone(user);
+
+  cleaned.events = events;
+  cleaned.cachedCalEvents = cachedCalEvents;
+  cleaned.selectedEventIds = user.selectedEventIds.filter(
+    (id) => !expiredGoogleIds.has(id),
+  );
+
+  if (cleaned.selectedEventIds.length !== user.selectedEventIds.length) {
+    cleaned.googleSelectionRevision = (user.googleSelectionRevision ?? 0) + 1;
+  }
+
+  return { user: cleaned, changed: true, deletes: pruneEventMetadata(cleaned) };
+}
+
+async function readUserWithCleanup(
+  redis: ReturnType<typeof getRedis>,
+  token: string,
+  leases: RedisLease[],
+): Promise<UserData | null> {
+  const user = await readUser(redis, token);
+
+  if (!user) return null;
+  const cleaned = cleanupExpiredEvents(user);
+
+  if (cleaned.changed) {
+    await commitIfLeasesOwned(
+      redis,
+      leases,
+      [{ key: `user:${token}`, value: cleaned.user }],
+      cleaned.deletes,
+    );
+  }
+
+  return cleaned.user;
 }
 
 async function readUser(

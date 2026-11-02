@@ -179,3 +179,5 @@ The implementation is an opt-in prototype: simulated tests and Mac previews do n
 establish real iPhone font metrics, extension memory usage, Shortcut data conversion,
 wallpaper crop/zoom, or background/locked execution. Those remain device acceptance
 tests before replacing the working PNG Shortcut or enabling automatic refresh.
+
+One-time manual events and cached Google entries are removed after their scheduled local day. Recurring manual series remain and advance locally; recurring Google series remain selected until sync refreshes their next occurrence. Cleanup removes associated focus, category, and share metadata, revokes stale share keys, and advances the Google selection revision when expired selections are removed. Unknown selected Google IDs remain until a sync resolves them.

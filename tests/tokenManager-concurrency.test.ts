@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryRedis } from './helpers/inMemoryRedis';
 import type * as TokenManager from '../lib/tokenManager';
 
@@ -7,6 +7,8 @@ let tokenManager: typeof TokenManager;
 
 describe('token manager serialization', () => {
   beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-24T12:00:00Z'));
     vi.resetModules();
     redis = new InMemoryRedis();
     vi.doMock('../lib/redis', () => ({
@@ -15,6 +17,8 @@ describe('token manager serialization', () => {
     }));
     tokenManager = await import('../lib/tokenManager');
   });
+
+  afterEach(() => vi.useRealTimers());
 
   it('retains both concurrent user mutations and one wallpaper key', async () => {
     await redis.set('user:owner', userRecord('owner'));

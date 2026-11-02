@@ -8,6 +8,8 @@ let fetchMock: ReturnType<typeof vi.fn>;
 
 describe('Telegram commands', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-24T12:00:00Z'));
     vi.resetModules();
     redis = new InMemoryRedis();
     fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }));
@@ -1173,7 +1175,7 @@ describe('Telegram commands', () => {
     expect(user?.sharedCountdowns?.[0]).toMatchObject({ eventId: 'present' });
   });
 
-  it('lists upcoming events in the user time zone without renumbering command references', async () => {
+  it('renumbers references after expired events are removed', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-11-01T00:30:00.000Z'));
     await seedLinkedUser({
@@ -1199,19 +1201,19 @@ describe('Telegram commands', () => {
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
     expect(deliveryBody(0).text).toContain(
-      '<b>Today manual</b>\nToday · Manual · <code>M2</code>',
+      '<b>Today manual</b>\nToday · Manual · <code>M1</code>',
     );
     expect(deliveryBody(0).text).toContain(
-      '<b>Recurring manual</b>\nFri, 6 Nov · Manual · Repeats weekly · <code>M3</code>',
+      '<b>Recurring manual</b>\nFri, 6 Nov · Manual · Repeats weekly · <code>M2</code>',
     );
     expect(deliveryBody(0).text).toContain(
-      '<b>Google today-google</b>\nToday · Google · <code>G2</code>',
+      '<b>Google today-google</b>\nToday · Google · <code>G1</code>',
     );
     expect(deliveryBody(0).text).not.toContain('Past manual');
     expect(deliveryBody(0).text).not.toContain('Google past-google');
 
     fetchMock.mockClear();
-    await processTelegramUpdate(telegramUpdate('/focus M2'), 'https://example.com');
+    await processTelegramUpdate(telegramUpdate('/focus M1'), 'https://example.com');
 
     expect((await getUser('owner'))?.focusEventId).toBe('today');
   });
@@ -1239,8 +1241,8 @@ describe('Telegram commands', () => {
 
     await processTelegramUpdate(telegramUpdate('/share M1'), 'https://example.com');
 
-    expect(deliveryBody(0).text).toContain('<b>Countdown already passed</b>');
-    expect((await redis.get<UserData>('user:owner'))?.sharedCountdowns).toBeUndefined();
+    expect(deliveryBody(0).text).toContain('<b>Share a countdown</b>');
+    expect((await redis.get<UserData>('user:owner'))?.sharedCountdowns).toEqual([]);
   });
 });
 
