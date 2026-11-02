@@ -267,7 +267,7 @@ describe('Telegram control panel', () => {
     expect(html).toContain('telegram.openLink(result.handoffUrl)');
   });
 
-  it('uses combined Google capacity, deduplicates submissions, and renders local save controls', async () => {
+  it('allows Google selections beyond seven combined events, deduplicates submissions, and renders local save controls', async () => {
     const user = userRecord();
 
     user.events = Array.from({ length: 6 }, (_, index) => ({
@@ -301,10 +301,10 @@ describe('Telegram control panel', () => {
 
     const bootstrap = await handler(appRequest({ action: 'bootstrap', initData }));
     const state = (await bootstrap.json()) as {
-      google: { manualCount: number; selectionLimit: number; events: unknown[] };
+      google: { manualCount: number; events: unknown[] };
     };
 
-    expect(state.google).toMatchObject({ manualCount: 6, selectionLimit: 1 });
+    expect(state.google).toMatchObject({ manualCount: 6 });
     expect(state.google.events).toHaveLength(2);
 
     const overCapacity = await handler(
@@ -321,10 +321,8 @@ describe('Telegram control panel', () => {
       }),
     );
 
-    expect(overCapacity.status).toBe(400);
-    await expect(overCapacity.json()).resolves.toEqual({
-      error: 'You have 6 manual events, so choose up to 1 Google event.',
-    });
+    expect(overCapacity.status).toBe(200);
+    expect((await redis.get<UserData>('user:owner'))?.selectedEventIds).toHaveLength(2);
 
     const html = await (
       await handler(new Request('https://example.com/api/telegram/app'))

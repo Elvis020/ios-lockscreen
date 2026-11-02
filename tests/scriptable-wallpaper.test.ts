@@ -223,7 +223,7 @@ describe('Scriptable native wallpaper adapter (simulated runtime)', () => {
               buildWallpaperModel({
                 date: new Date('2026-10-24T12:00:00Z'),
                 eventCount,
-                publicEvents: Array.from({ length: 7 }, (_, index) => ({
+                publicEvents: Array.from({ length: 10 }, (_, index) => ({
                   name: `Adapter milestone ${index}`,
                   date: '2026-11-14',
                 })),

@@ -70,7 +70,7 @@ Typing `/` in the bot chat will then show autocomplete for:
 /category M1|G1 general|work|personal|health|travel
 /edit
 /edit NUMBER
-/eventcount 1|2|3|4|5
+/eventcount 1|2|3|4|5|6|7|8
 /delete NUMBER
 /view week|month|quarter|rolling14|countdown|year|hybrid
 /range week|month|quarter|rolling14|year
@@ -116,11 +116,15 @@ version when configuring the iOS Shortcut or anywhere else that needs the raw UR
 
 `/view` applies one of the seven shared presets. `/range` and `/layout` then let you change those dimensions independently. `/profile` calibrates the vertical content band. `large-clock` reserves more room above while keeping content above the notification region. Preview the result on the target phone because iOS lock-screen spacing and crop/zoom behavior vary.
 
-`/eventcount 3` shows up to three upcoming events. Choose 1–5; the default is 2.
+`/eventcount 3` shows up to three upcoming events. Choose 1–8; the default is 5.
 The count is saved separately from the view, so changing presets, ranges, layouts,
 themes or clock profiles does not reset it. The dashboard's **Events shown** setting
 edits the same preference. Remaining events appear as `+N more`; all tracked events
 still mark the calendar. Changes appear on the next wallpaper refresh.
+
+Tracking itself is not capped. To keep Telegram messages compact, `/events`, `/today`,
+and `/week` show the next five matching events and link to **Manage events** for the
+complete list.
 
 Agenda and Minimal views have been removed. Saved accounts using either fall back
 to Calendar without losing events or their wallpaper URL. The retired `minimal`

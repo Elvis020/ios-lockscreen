@@ -823,16 +823,6 @@ async function processEventCallback(
           ? await saveTelegramEditDraft(token, draft, completion)
           : await saveTelegramDraftEvent(token, draft, completion);
 
-      if (outcome === 'limit') {
-        acknowledgement = 'Event limit reached.';
-        await sendTelegramReply(
-          chat,
-          expectedCommandErrorReply('Maximum 7 tracked events allowed')!,
-        );
-
-        return { completionCommitted: false };
-      }
-
       if (outcome === 'stale') {
         return { completionCommitted: false };
       }
@@ -1189,16 +1179,7 @@ async function runLinkedTelegramCommand(
 
     if (!user) throw new Error('Linked account no longer exists');
 
-    const manageButton: TelegramInlineKeyboardMarkup = {
-      inline_keyboard: [
-        [
-          {
-            text: 'Manage events',
-            web_app: { url: `${calendarOrigin(origin)}/api/telegram/app` },
-          },
-        ],
-      ],
-    };
+    const manageButton = manageEventsButton(origin);
 
     const today = localDate(user.timeZone);
     const events = buildUpcomingEventTimeline(
@@ -1227,6 +1208,7 @@ async function runLinkedTelegramCommand(
           '<b>Upcoming events</b>',
           '',
           ...events
+            .slice(0, 5)
             .map((event) => {
               const metadata = [
                 formatUpcomingEventDate(event.date, today),
@@ -1243,6 +1225,9 @@ async function runLinkedTelegramCommand(
             })
             .flatMap((event, index) => (index === 0 ? [event] : ['', event])),
           '',
+          ...(events.length > 5
+            ? [`+${events.length - 5} more · Manage all events below.`, '']
+            : []),
           ...(events.some((event) => event.source === 'manual')
             ? ['Manual events: <code>/edit</code>.']
             : []),
@@ -1281,12 +1266,16 @@ async function runLinkedTelegramCommand(
           `<b>${command === '/today' ? 'Today' : 'This week'}</b>`,
           '',
           ...(events.length
-            ? events.map(
-                (event) =>
-                  `${event.stableRef} · <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)}`,
-              )
+            ? events
+                .slice(0, 5)
+                .map(
+                  (event) =>
+                    `${event.stableRef} · <b>${escapeTelegramHtml(event.date)}</b> · ${escapeTelegramHtml(event.name)}`,
+                )
             : ['No tracked events.']),
+          ...(events.length > 5 ? [`+${events.length - 5} more`] : []),
         ].join('\n'),
+        manageEventsButton(origin),
       ),
       completionCommitted: false,
     };
@@ -1711,20 +1700,28 @@ async function runLinkedTelegramCommand(
         userId: context.userId,
         token,
         chatId: context.chatId,
-        eventIds: user.events.map(({ id }) => id),
+        eventIds: user.events.slice(0, 8).map(({ id }) => id),
       },
       completion,
     );
-    const buttons = user.events.map((event, index) => [
-      {
-        text: `${index + 1}. ${event.name} · ${event.date}`.slice(0, 64),
-        callback_data: `ee:${menu.id}:${index}`,
-      },
-    ]);
+    const buttons: TelegramInlineKeyboardMarkup['inline_keyboard'] = user.events
+      .slice(0, 8)
+      .map((event, index) => [
+        {
+          text: `${index + 1}. ${event.name} · ${event.date}`.slice(0, 64),
+          callback_data: `ee:${menu.id}:${index}`,
+        },
+      ]);
+
+    if (user.events.length > 8) {
+      buttons.push(...manageEventsButton(origin).inline_keyboard);
+    }
 
     return {
       reply: htmlReply(
-        '<b>Edit an event</b>\nChoose one to review your changes before saving.',
+        user.events.length > 8
+          ? '<b>Edit an event</b>\nChoose one below, use <code>/edit NUMBER</code>, or manage the rest in the control panel.'
+          : '<b>Edit an event</b>\nChoose one to review your changes before saving.',
         { inline_keyboard: buttons },
       ),
       completionCommitted: Boolean(completion),
@@ -1794,9 +1791,12 @@ async function runLinkedTelegramCommand(
   if (command === '/eventcount') {
     const count = Number(args[0]);
 
-    if (args.length !== 1 || !/^[1-5]$/.test(args[0]) || !isEventCount(count)) {
+    if (args.length !== 1 || !/^[1-8]$/.test(args[0]) || !isEventCount(count)) {
       return {
-        reply: usageReply('Choose how many events to show', '/eventcount 1|2|3|4|5'),
+        reply: usageReply(
+          'Choose how many events to show',
+          '/eventcount 1|2|3|4|5|6|7|8',
+        ),
         completionCommitted: false,
       };
     }
@@ -2262,6 +2262,19 @@ function onboardingReply(origin: string, created: boolean): TelegramReply {
   );
 }
 
+function manageEventsButton(origin: string): TelegramInlineKeyboardMarkup {
+  return {
+    inline_keyboard: [
+      [
+        {
+          text: 'Manage events',
+          web_app: { url: `${calendarOrigin(origin)}/api/telegram/app` },
+        },
+      ],
+    ],
+  };
+}
+
 function googleSyncReply(result: GoogleSyncResult, origin: string): TelegramReply {
   const appUrl = `${calendarOrigin(origin)}/api/telegram/app`;
   const button = (text: string): TelegramInlineKeyboardMarkup => ({
@@ -2345,7 +2358,7 @@ function helpText(): string {
     '<code>/repeat M1 off|weekly|monthly|yearly</code>',
     '<code>/category M1|G1 general|work|personal|health|travel</code>',
     '<code>/edit</code> or <code>/edit NUMBER</code>  Review an event before saving',
-    '<code>/eventcount 1|2|3|4|5</code>  Events shown (default 2)',
+    '<code>/eventcount 1|2|3|4|5|6|7|8</code>  Events shown (default 5)',
     '<code>/delete NUMBER</code>',
     '',
     '<b>Appearance</b>',
@@ -2533,15 +2546,6 @@ function expectedCommandErrorReply(message: string): TelegramReply | null {
   if (message === 'Event is not upcoming') {
     return htmlReply(
       '<b>Countdown already passed</b>\nChoose a current or future event to share.',
-    );
-  }
-
-  if (message === 'Maximum 7 tracked events allowed') {
-    return htmlReply(
-      [
-        '<b>Event limit reached</b>',
-        'Keep up to 7 tracked events. Delete one before adding another.',
-      ].join('\n'),
     );
   }
 

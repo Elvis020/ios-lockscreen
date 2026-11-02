@@ -325,7 +325,7 @@ export default function handler() {
       <div class="stack">
         <div class="card">
           <h2>Manual events</h2>
-          <p class="muted">Track up to seven manual and selected Google events combined.</p>
+          <p class="muted">Track manual and selected Google events.</p>
           <div class="row mobile-stack" style="margin-top: 18px;">
             <input id="eventName" maxlength="50" placeholder="Event name">
             <input id="eventDate" type="date">
@@ -370,7 +370,7 @@ export default function handler() {
           <div style="margin-top: 16px;">
             <h3><label for="eventCount">Events shown</label></h3>
             <select id="eventCount" aria-describedby="eventCountHelp"></select>
-            <p id="eventCountHelp" class="setting-help">Up to this many upcoming events in every view. Default: 2.</p>
+            <p id="eventCountHelp" class="setting-help">Up to this many upcoming events in every view. Default: 5.</p>
           </div>
           <div style="margin-top: 16px;">
             <h3>Theme</h3>
@@ -625,7 +625,7 @@ export default function handler() {
         options.lockScreenProfiles,
         (value) => optionLabel(value),
       );
-      populateSelect('eventCount', options.eventCounts || [1, 2, 3, 4, 5], (value) => String(value));
+      populateSelect('eventCount', options.eventCounts || [1, 2, 3, 4, 5, 6, 7, 8], (value) => String(value));
 
       const presetSelect = byId('wallpaperPreset');
 
@@ -648,7 +648,7 @@ export default function handler() {
       byId('timeRange').value = settings.timeRange || settings.viewMode || 'quarter';
       byId('presentation').value = settings.presentation || 'calendar';
       byId('lockScreenProfile').value = settings.lockScreenProfile || 'standard';
-      byId('eventCount').value = String(settings.eventCount || 2);
+      byId('eventCount').value = String(settings.eventCount || 5);
       syncPresetSelection();
     }
 

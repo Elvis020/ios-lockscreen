@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildNativeWallpaperScene,
-  NativeSceneBudgetError,
-} from '../lib/nativeWallpaperScene';
+import { buildNativeWallpaperScene } from '../lib/nativeWallpaperScene';
 import {
   EVENT_COUNTS,
   LOCK_SCREEN_PROFILES,
@@ -45,7 +42,7 @@ describe('native wallpaper scene', () => {
               eventCount,
               publicEvents: [
                 ...publicEvents,
-                ...Array.from({ length: 4 }, (_, index) => ({
+                ...Array.from({ length: 7 }, (_, index) => ({
                   name: `Extra milestone ${index}`,
                   date: '2026-12-25',
                 })),
@@ -67,7 +64,7 @@ describe('native wallpaper scene', () => {
               expect(text.map(({ value }) => value)).toContain(event.name);
             }
             expect(visible).toHaveLength(eventCount);
-            expect(text.map(({ value }) => value)).toContain(`+${7 - eventCount} more`);
+            expect(text.map(({ value }) => value)).toContain(`+${10 - eventCount} more`);
             for (const event of model.events.slice(eventCount)) {
               expect(text.map(({ value }) => value)).not.toContain(event.name);
             }
@@ -116,6 +113,47 @@ describe('native wallpaper scene', () => {
       }
     },
   );
+
+  it('fits eight events for every range, presentation, profile, and ring style', () => {
+    for (const timeRange of TIME_RANGES) {
+      for (const presentation of PRESENTATIONS) {
+        for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+          for (const milestoneRingStyle of ['single', 'double', 'halo'] as const) {
+            const user = normalizeUserData(
+              {
+                timeRange,
+                presentation,
+                lockScreenProfile,
+                milestoneRingStyle,
+                eventCount: 8,
+                timeZone: 'UTC',
+                events: Array.from({ length: 10 }, (_, index) => ({
+                  id: `event-${index}`,
+                  name: `Event ${index}`,
+                  date: '2026-12-25',
+                  source: 'manual',
+                  createdAt: '2026-01-01T00:00:00.000Z',
+                  category: 'general',
+                  recurrence: 'none',
+                })),
+              },
+              'owner',
+            )!;
+            const model = buildWallpaperModel({ date, user });
+            const scene = buildNativeWallpaperScene(model);
+            const bounds = getWallpaperLayoutBounds(model);
+
+            for (const command of scene.commands) {
+              const height =
+                command.kind === 'circle' ? command.diameter : command.height;
+
+              expect(command.y + height).toBeLessThanOrEqual(bounds.contentBottom);
+            }
+          }
+        }
+      }
+    }
+  });
 
   it('renders saved Year/progress exactly like the compact Year calendar', () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
@@ -588,7 +626,7 @@ describe('native wallpaper scene', () => {
     }
   });
 
-  it('rejects oversized public marker scenes explicitly instead of dropping rings', () => {
+  it('renders every marked leap-year day within the native budget', () => {
     const model = buildWallpaperModel({
       date: new Date('2028-01-01T12:00:00Z'),
       timeRange: 'year',
@@ -598,6 +636,12 @@ describe('native wallpaper scene', () => {
       })),
     });
 
-    expect(() => buildNativeWallpaperScene(model)).toThrow(NativeSceneBudgetError);
+    const scene = buildNativeWallpaperScene(model);
+
+    expect(scene.commands.length).toBeLessThanOrEqual(600);
+    expect(JSON.stringify(scene).length).toBeLessThanOrEqual(200000);
+    expect(scene.commands.filter((command) => command.kind === 'circle')).toHaveLength(
+      367,
+    );
   });
 });

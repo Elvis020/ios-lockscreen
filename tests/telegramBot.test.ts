@@ -26,6 +26,40 @@ describe('Telegram commands', () => {
     vi.restoreAllMocks();
   });
 
+  it('bounds upcoming events and edit menus while keeping numbered edits', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-24T12:00:00Z'));
+    await seedLinkedUser({
+      events: Array.from({ length: 10 }, (_, index) =>
+        manualEvent(`event-${index}`, `Event ${index + 1}`),
+      ),
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
+    expect(deliveryBody(0).text).toContain('+5 more · Manage all events below.');
+    expect(deliveryBody(0).text.match(/<code>M\d+<\/code>/g)).toHaveLength(5);
+    expect(deliveryBody(0).reply_markup.inline_keyboard[0][0].text).toBe('Manage events');
+
+    await processTelegramUpdate(telegramUpdate('/edit'), 'https://example.com');
+    const editKeyboard = deliveryBody(1).reply_markup.inline_keyboard;
+
+    expect(editKeyboard.filter((row: any[]) => row[0]?.callback_data)).toHaveLength(8);
+    expect(editKeyboard.at(-1)?.[0]).toEqual({
+      text: 'Manage events',
+      web_app: { url: 'https://example.com/api/telegram/app' },
+    });
+    expect(deliveryBody(1).text).toContain('/edit NUMBER');
+    await processTelegramUpdate(telegramUpdate('/edit 10'), 'https://example.com');
+    expect(deliveryBody(2).text).toContain('Event 10');
+
+    vi.setSystemTime(new Date('2026-10-31T12:00:00Z'));
+    await processTelegramUpdate(telegramUpdate('/week'), 'https://example.com');
+    expect(deliveryBody(3).text).toContain('+5 more');
+    expect(deliveryBody(3).text.match(/M\d+ ·/g)).toHaveLength(5);
+    expect(deliveryBody(3).reply_markup.inline_keyboard[0][0].text).toBe('Manage events');
+  });
+
   it('keeps the linked command compatibility API returning a string', async () => {
     const { handleLinkedTelegramCommand } = await import('../lib/telegramBot');
     const help = await handleLinkedTelegramCommand(
@@ -814,7 +848,7 @@ describe('Telegram commands', () => {
     });
   });
 
-  it('maps expected command errors without exposing internal error text', async () => {
+  it('saves an event beyond seven tracked events', async () => {
     await seedLinkedUser({
       events: Array.from({ length: 7 }, (_, index) =>
         manualEvent(`event-${index}`, `Event ${index + 1}`),
@@ -830,10 +864,7 @@ describe('Telegram commands', () => {
 
     await processTelegramUpdate(eventCallback(saveCallback), 'https://example.com');
 
-    expect(deliveryBody(1).text).toBe(
-      '<b>Event limit reached</b>\nKeep up to 7 tracked events. Delete one before adding another.',
-    );
-    expect(deliveryBody(1).text).not.toContain('Maximum 7 tracked events allowed');
+    expect(deliveryBody(1).text).toContain('Event saved');
   });
 
   it('updates presets and independent wallpaper dimensions', async () => {
@@ -865,7 +896,7 @@ describe('Telegram commands', () => {
     expect(deliveryBody(4).text).toContain('Preview it on your phone');
   });
 
-  it.each(['', '0', '6', '-1', '2.5', '3junk', '3 4', '03'])(
+  it.each(['', '0', '9', '-1', '2.5', '3junk', '3 4', '03'])(
     'rejects invalid event counts (%s) without mutating settings',
     async (argument) => {
       await seedLinkedUser();
@@ -878,7 +909,7 @@ describe('Telegram commands', () => {
         'https://example.com',
       );
 
-      expect(deliveryBody(0).text).toContain('/eventcount 1|2|3|4|5');
+      expect(deliveryBody(0).text).toContain('/eventcount 1|2|3|4|5|6|7|8');
       expect(await getUser('owner')).toEqual(before);
     },
   );

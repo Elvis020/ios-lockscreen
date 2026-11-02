@@ -174,7 +174,7 @@ export async function syncGoogleEvents(
       account.id,
       account.email,
       user.timeZone,
-      user.selectedEventIds.slice(0, 7),
+      user.selectedEventIds,
     );
 
     calendarCount += batch.calendarCount;

@@ -162,7 +162,7 @@ export default async function handler(req: Request) {
       if (body.eventCount !== undefined) {
         if (!isEventCount(body.eventCount)) {
           return jsonResponse(
-            { error: 'Event count must be a whole number from 1 to 5' },
+            { error: 'Event count must be a whole number from 1 to 8' },
             400,
           );
         }

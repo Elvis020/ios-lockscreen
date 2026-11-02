@@ -31,10 +31,13 @@ const events = [
   { name: 'Team offsite', date: '2026-12-04' },
   { name: 'Annual planning', date: '2027-01-08' },
   { name: 'Strategy review', date: '2027-02-02' },
+  { name: 'Review eight', date: '2027-02-03' },
+  { name: 'Review nine', date: '2027-02-04' },
+  { name: 'Review ten', date: '2027-02-05' },
 ];
 
 describe('wallpaper renderer', () => {
-  it.each([2, 5])(
+  it.each([2, 5, 8])(
     'materializes native-size PNGs for every active layout with event count %i',
     async (eventCount) => {
       for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
@@ -292,12 +295,12 @@ describe('wallpaper renderer', () => {
     expect(getWallpaperHeaderCopy(countdown, 'Launch focus').title).toBe('Launch focus');
   });
 
-  it('defaults to two events independently of presentation and clock profile', () => {
+  it('defaults to five events independently of presentation and clock profile', () => {
     for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
       for (const presentation of PRESENTATIONS) {
         const model = buildWallpaperModel({ date, presentation, lockScreenProfile });
 
-        expect(getWallpaperEventLayout(model).limit).toBe(2);
+        expect(getWallpaperEventLayout(model).limit).toBe(5);
       }
     }
   });
@@ -310,6 +313,7 @@ describe('wallpaper renderer', () => {
     const model = buildWallpaperModel({
       date,
       timeRange: 'quarter',
+      eventCount: 2,
       publicEvents: manyEvents,
     });
     const { text, styles } = inspectCanvas(WallpaperCanvas({ model }));

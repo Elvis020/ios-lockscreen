@@ -35,7 +35,7 @@ Existing user records preserve their stored week, month, or quarter and normaliz
 
 The schema stores `timeRange`, `presentation`, `lockScreenProfile`, and `eventCount`
 separately. The seven named presets map range/presentation only, so choosing a
-preset never resets the event count. Counts are integers 1–5, defaulting to 2 for
+preset never resets the event count. Counts are integers 1–8, defaulting to 5 for
 new, legacy or invalid stored settings. Agenda and Minimal are no longer public
 views; saved versions normalize to Calendar without changing account keys or
 events. The retired Minimal color theme normalizes to Default. Legacy `viewMode`
@@ -121,8 +121,8 @@ content width. Compact rows use
 `Today`, `Tomorrow`, or `22d`; long names truncate without displacing the countdown. The
 large countdown display has no event timer line; additional Countdown events do.
 
-Every active presentation honors the same saved display count: 1–5 events, default
-2, for either clock profile. The layout reserves the actual rail height (at least
+Every active presentation honors the same saved display count: 1–8 events, default
+5, for either clock profile. The layout reserves the actual rail height (at least
 76px for an empty state), rather than an unused fixed 204px slot. Lists use the
 dot-grid envelope in dot views and full-width rows otherwise when the available band
 allows, first tightening

@@ -3,7 +3,7 @@ export const TIME_RANGES = [...VIEW_MODES, 'rolling14', 'year'] as const;
 export const PRESENTATIONS = ['calendar', 'countdown', 'progress', 'hybrid'] as const;
 export const LEGACY_PRESENTATIONS = ['agenda', 'minimal'] as const;
 export const LOCK_SCREEN_PROFILES = ['standard', 'large-clock'] as const;
-export const DEFAULT_EVENT_COUNT = 2;
+export const DEFAULT_EVENT_COUNT = 5;
 export const EVENT_CATEGORY_COLORS: Record<string, string> = {
   general: '#8C8C8C',
   work: '#5D7FA3',
@@ -22,7 +22,7 @@ export function eventCategoryColor(
 
   return EVENT_CATEGORY_COLORS[category ?? 'general'] ?? themeAccent;
 }
-export const EVENT_COUNTS = [1, 2, 3, 4, 5] as const;
+export const EVENT_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 
 export type ViewMode = (typeof VIEW_MODES)[number];
 export type TimeRange = (typeof TIME_RANGES)[number];

@@ -25,7 +25,7 @@ export const TELEGRAM_COMMANDS: TelegramCommand[] = [
   { command: 'edit', description: 'Edit a manual event before saving changes' },
   {
     command: 'eventcount',
-    description: 'Set events shown in every view: 1 to 5 (default 2)',
+    description: 'Set events shown in every view: 1 to 8 (default 5)',
   },
   { command: 'delete', description: 'Delete an event by its /events number' },
   { command: 'view', description: 'Choose a wallpaper preset' },

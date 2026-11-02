@@ -37,7 +37,7 @@ keep at least 80px clear after the last dot's outer ring and finish by y=2080.
 The gap is capped at 240px so Week and Rolling 14 do not leave an oversized empty
 area before their events.
 Event timer lines remain 3px thin. Compact lists
-default to two events plus `+N more`. Set 1–5 using `/eventcount` or **Events shown**
+default to five events plus `+N more`. Set 1–8 using `/eventcount` or **Events shown**
 on the dashboard; this preference survives view changes. Rows stay full width
 while space allows, tightening their vertical gaps before using two columns for
 the densest combinations. Dot diameter and axis gaps adapt within bounded ranges,
@@ -76,9 +76,10 @@ in both renderers. Neither
 path changes the actual iOS clock.
 
 The native drawing budget stays at 600 commands and 200,000 serialized characters.
-Normal accounts have at most seven tracked events and fit that budget, including
-a leap-year grid with event rings. An oversized public example returns a private,
-non-cacheable 422 `native_scene_too_large` error rather than silently dropping markers.
+When event rings would exceed a conservative command budget, all marked dates use
+category-colored dots instead. The current day retains a contrasting center. An
+oversized public example can still return a private, non-cacheable 422
+`native_scene_too_large` error.
 
 ## Set up a separate test Shortcut
 
@@ -133,7 +134,7 @@ If Scriptable is terminated for memory or fails inside the extension, try its
 
 ## Verify on the iPhone
 
-Check all seven presets, event counts 1–5, and both clock profiles. Confirm genuine system-font text,
+Check all seven presets, event counts 1–8, and both clock profiles. Confirm genuine system-font text,
 crisp dots, the correct period-day count, consistent first-dot placement, event-ring alignment and
 three-pixel event tracks. Test a long title, accented characters and emoji. Event
 names currently use conservative single-line truncation because DrawContext does

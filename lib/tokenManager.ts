@@ -241,10 +241,6 @@ export async function addManualEvent(
   return mutateUser(
     token,
     (user) => {
-      if (user.events.length + user.selectedEventIds.length >= 7) {
-        throw new Error('Maximum 7 tracked events allowed');
-      }
-
       user.events.push({
         ...event,
         id: generateUUID(),
@@ -262,7 +258,7 @@ export async function saveTelegramDraftEvent(
   token: string,
   draft: Pick<TelegramEventDraft, 'id' | 'revision' | 'userId' | 'name' | 'date'>,
   completion?: MutationCompletion,
-): Promise<'saved' | 'already-saved' | 'stale' | 'limit'> {
+): Promise<'saved' | 'already-saved' | 'stale'> {
   const redis = getRedis();
   const saveKey = `telegram:draft:completion:${draft.id}:${draft.revision}`;
 
@@ -312,10 +308,6 @@ export async function saveTelegramDraftEvent(
         user.telegram.chatId !== active.chatId
       ) {
         return 'stale';
-      }
-
-      if (user.events.length + user.selectedEventIds.length >= 7) {
-        return 'limit';
       }
 
       user.events.push({
@@ -465,10 +457,6 @@ export async function replaceManualEvents(
   >,
 ): Promise<UserData | null> {
   return mutateUser(token, (user) => {
-    if (events.length + user.selectedEventIds.length > 7) {
-      throw new Error('Maximum 7 tracked events allowed');
-    }
-
     user.events = events.map((event) => ({
       ...event,
       id: generateUUID(),
@@ -567,7 +555,7 @@ export async function updatePreferences(
 
       if (preferences.eventCount !== undefined) {
         if (!isEventCount(preferences.eventCount)) {
-          throw new Error('Event count must be a whole number from 1 to 5');
+          throw new Error('Event count must be a whole number from 1 to 8');
         }
 
         user.eventCount = preferences.eventCount;
@@ -1055,16 +1043,6 @@ export async function updateSelectedEvents(
 
     if (selectedEventIds.some((id) => !availableIds.has(id))) {
       throw new Error('One or more calendar events are unavailable');
-    }
-
-    const selectionLimit = Math.max(0, 7 - user.events.length);
-
-    if (selectedEventIds.length > selectionLimit) {
-      const eventLabel = selectionLimit === 1 ? 'event' : 'events';
-
-      throw new Error(
-        `You have ${user.events.length} manual events, so choose up to ${selectionLimit} Google ${eventLabel}.`,
-      );
     }
 
     user.selectedEventIds = selectedEventIds;

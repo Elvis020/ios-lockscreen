@@ -37,6 +37,46 @@ describe('token manager serialization', () => {
     expect(await redis.get(`wallpaper:${user?.wallpaperKey}`)).toBe('owner');
   });
 
+  it('supports concurrent additions, replacements, and Google selections beyond seven', async () => {
+    const cachedCalEvents = Array.from({ length: 10 }, (_, index) => ({
+      id: `google-${index}`,
+      name: `Google ${index}`,
+      date: '2026-11-01',
+      accountEmail: 'ada@example.com',
+    }));
+
+    await redis.set('user:owner', { ...userRecord('owner'), cachedCalEvents });
+    await tokenManager.replaceManualEvents(
+      'owner',
+      Array.from({ length: 10 }, (_, index) => ({
+        name: `Manual ${index}`,
+        date: '2026-11-01',
+      })),
+    );
+    await Promise.all([
+      tokenManager.addManualEvent('owner', {
+        name: 'Concurrent one',
+        date: '2026-11-01',
+      }),
+      tokenManager.addManualEvent('owner', {
+        name: 'Concurrent two',
+        date: '2026-11-01',
+      }),
+      tokenManager.updateSelectedEvents(
+        'owner',
+        cachedCalEvents.map(({ id }) => id),
+      ),
+    ]);
+
+    const user = await tokenManager.getUser('owner');
+
+    expect(user?.events).toHaveLength(12);
+    expect(user?.selectedEventIds).toHaveLength(10);
+    await expect(
+      tokenManager.updateSelectedEvents('owner', ['unavailable']),
+    ).rejects.toThrow('unavailable');
+  });
+
   it('retries from fresh state when the original lease is lost before commit', async () => {
     const delayedRedis = new DelayedUserReadRedis('user:owner');
 

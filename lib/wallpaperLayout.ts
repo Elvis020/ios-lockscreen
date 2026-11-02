@@ -148,7 +148,7 @@ function createEventLayout(
   const dense = compact && density === 'dense';
   const columns = dense ? 2 : 1;
   const rowHeight = dense ? 52 : snug ? 68 : compact ? 76 : 144;
-  const rowGap = dense ? 6 : snug ? 14 : compact ? 20 : 40;
+  const rowGap = dense ? 5 : snug ? 14 : compact ? 20 : 40;
   const overflowHeight = dense ? 26 : compact ? 32 : 40;
   const rows = Math.ceil(visibleCount / columns);
   const contentHeight =

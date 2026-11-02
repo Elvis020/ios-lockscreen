@@ -25,7 +25,7 @@ import {
 import { buildWallpaperModel } from '../lib/wallpaperModel';
 
 const date = new Date('2026-10-24T12:00:00Z');
-const publicEvents = Array.from({ length: 7 }, (_, index) => ({
+const publicEvents = Array.from({ length: 10 }, (_, index) => ({
   name: `Milestone ${index}`,
   date: '2026-12-25',
 }));
@@ -97,7 +97,7 @@ describe('continuous dot progress layout', () => {
     }
   });
 
-  it.each([0, 1, 7])(
+  it.each([0, 1, 10])(
     'fits bounded dots and selected rows with %i actual events',
     (actualCount) => {
       for (const timeRange of TIME_RANGES) {
@@ -180,6 +180,7 @@ describe('continuous dot progress layout', () => {
         }
       }
     },
+    15000,
   );
 
   it('preserves full-width rows when possible and uses dense event rows only when needed', () => {
@@ -196,7 +197,7 @@ describe('continuous dot progress layout', () => {
     expect(getWallpaperEventLayout(quarter)).toMatchObject({
       columns: 2,
       rowHeight: 52,
-      slotHeight: 194,
+      slotHeight: 192,
     });
   });
 

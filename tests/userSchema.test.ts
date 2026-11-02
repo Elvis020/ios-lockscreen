@@ -2,16 +2,19 @@ import { describe, expect, it } from 'vitest';
 import { normalizeUserData } from '../lib/userSchema';
 
 describe('normalizeUserData', () => {
-  it.each([undefined, null, '5', 0, 6, -1, 2.5, Infinity])(
-    'defaults missing or invalid event count %s to two',
+  it.each([undefined, null, '5', 0, 9, -1, 2.5, Infinity])(
+    'defaults missing or invalid event count %s to five',
     (eventCount) => {
-      expect(normalizeUserData({ eventCount }, 'owner')?.eventCount).toBe(2);
+      expect(normalizeUserData({ eventCount }, 'owner')?.eventCount).toBe(5);
     },
   );
 
-  it.each([1, 2, 3, 4, 5])('preserves supported event count %s', (eventCount) => {
-    expect(normalizeUserData({ eventCount }, 'owner')?.eventCount).toBe(eventCount);
-  });
+  it.each([1, 2, 3, 4, 5, 6, 7, 8])(
+    'preserves supported event count %s',
+    (eventCount) => {
+      expect(normalizeUserData({ eventCount }, 'owner')?.eventCount).toBe(eventCount);
+    },
+  );
   it.each(['agenda', 'minimal'])(
     'falls back from retired %s presentation without losing data',
     (presentation) => {

@@ -25,8 +25,12 @@ describe('Telegram mutation idempotency', () => {
     vi.restoreAllMocks();
   });
 
-  it('does not duplicate a confirmed event when the outer done write would fail', async () => {
-    await seedLinkedUser();
+  it('does not duplicate a confirmed event beyond seven on replay', async () => {
+    await seedLinkedUser(
+      Array.from({ length: 10 }, (_, index) =>
+        manualEvent(`id-${index}`, `Event ${index}`),
+      ),
+    );
     const { default: handler } = await import('../api/telegram/webhook');
     const addUpdate = telegramUpdate(501, '/add 2026-11-01 Launch');
 
@@ -43,7 +47,8 @@ describe('Telegram mutation idempotency', () => {
 
     const user = await redis.get<{ events: Array<{ name: string }> }>('user:owner');
 
-    expect(user?.events.map(({ name }) => name)).toEqual(['Launch']);
+    expect(user?.events).toHaveLength(11);
+    expect(user?.events.filter(({ name }) => name === 'Launch')).toHaveLength(1);
     expect(await redis.get(doneKey)).toBe('done');
     expect(redis.directSetAttempts.get(doneKey)).toBeUndefined();
   });

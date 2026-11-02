@@ -150,6 +150,12 @@ function addCalendar(
 ): void {
   const grid = getContinuousDotGridLayout(model);
 
+  const markerCount = model.cells.filter((cell) => cell.event).length;
+  const ringCommands = model.milestoneRingStyle === 'single' ? 2 : 4;
+  // Reserve room for text, events, overlays, and the current-day indicator.
+  const denseMarkers =
+    scene.commands.length + model.cells.length + markerCount * ringCommands + 100 > 600;
+
   for (const [index, cell] of model.cells.entries()) {
     const position = grid.positions[index];
 
@@ -164,6 +170,7 @@ function addCalendar(
         y: top + position.y,
       },
       grid,
+      denseMarkers,
     );
   }
 }
@@ -176,12 +183,13 @@ function addDot(
   category: string | undefined,
   position: { x: number; y: number },
   geometry: { size: number; eventRingGap: number; eventRingWidth: number },
+  denseMarkers: boolean,
 ): void {
   // Snap once so the fill and both ring layers share the same pixel-aligned center.
   const x = Math.round(position.x);
   const y = Math.round(position.y);
 
-  if (cell.event) {
+  if (cell.event && !denseMarkers) {
     const color = eventCategoryColor(category, theme.current);
 
     if (ringStyle === 'double' || ringStyle === 'halo') {
@@ -228,14 +236,29 @@ function addDot(
     x,
     y,
     diameter: geometry.size,
-    fill: cell.current
-      ? theme.current
-      : cell.passed && cell.weekend
-        ? theme.weekend
-        : cell.passed
-          ? theme.passed
-          : theme.future,
+    fill:
+      cell.event && denseMarkers
+        ? eventCategoryColor(category, theme.current)
+        : cell.current
+          ? theme.current
+          : cell.passed && cell.weekend
+            ? theme.weekend
+            : cell.passed
+              ? theme.passed
+              : theme.future,
   });
+
+  if (denseMarkers && cell.event && cell.current) {
+    const diameter = Math.max(2, Math.round(geometry.size / 3));
+
+    scene.commands.push({
+      kind: 'circle',
+      x: x + Math.round((geometry.size - diameter) / 2),
+      y: y + Math.round((geometry.size - diameter) / 2),
+      diameter,
+      fill: theme.text,
+    });
+  }
 }
 
 function addPeriodProgress(

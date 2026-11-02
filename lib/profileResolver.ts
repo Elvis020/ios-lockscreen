@@ -1,4 +1,5 @@
 import {
+  DEFAULT_EVENT_COUNT,
   isEventCount,
   isLockScreenProfile,
   isPresentation,
@@ -24,7 +25,7 @@ export function resolveReadTimeAppearance(
     timeRange: user.timeRange,
     presentation: user.presentation,
     lockScreenProfile: user.lockScreenProfile,
-    eventCount: user.eventCount ?? 2,
+    eventCount: isEventCount(user.eventCount) ? user.eventCount : DEFAULT_EVENT_COUNT,
     livingOverlay: user.livingOverlay ?? 'none',
     milestoneRingStyle: user.milestoneRingStyle ?? 'single',
     slot: null,

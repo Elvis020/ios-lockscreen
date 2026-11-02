@@ -395,7 +395,6 @@ function appState(user: UserData) {
         selected: selected.has(event.id),
       })),
       manualCount,
-      selectionLimit: Math.max(0, 7 - manualCount),
       trackedCount: user.selectedEventIds.length,
     },
     manualEvents: user.events.map(({ id, name, date }) => ({ id, name, date })),
@@ -909,7 +908,7 @@ function appPage(nonce: string): string {
           input.type = 'checkbox';
           input.value = event.id;
           input.checked = selectedIds.has(event.id);
-          input.disabled = googleSaving || (!input.checked && selectedIds.size >= google.selectionLimit);
+          input.disabled = googleSaving;
           name.textContent = event.name;
           meta.textContent = event.recurring ? 'Repeats · next ' + event.date + ' · ' + event.calendarName : event.date + ' · ' + event.calendarName;
           copy.append(name, meta);
@@ -925,7 +924,7 @@ function appPage(nonce: string): string {
         const bar = byId('googleSelectionBar');
         const save = byId('saveGoogle');
         bar.classList.toggle('hidden', !google.events.length);
-        byId('googleSelectionCopy').textContent = selectedIds.size + ' of ' + google.selectionLimit + ' Google slots selected · ' + google.manualCount + ' manual';
+        byId('googleSelectionCopy').textContent = selectedIds.size + ' Google selected · ' + google.manualCount + ' manual';
         save.textContent = 'Save ' + selectedIds.size + ' selected events';
         save.disabled = googleSaving;
       }

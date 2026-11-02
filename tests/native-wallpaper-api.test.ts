@@ -197,7 +197,7 @@ describe('native wallpaper API', () => {
     }
   });
 
-  it('returns a bounded non-cacheable error for an oversized public scene', async () => {
+  it('returns a bounded native scene for a fully marked year', async () => {
     vi.setSystemTime(new Date('2028-01-01T12:00:00Z'));
     const { default: handler } = await import('../api/wallpaper');
     const events = Array.from(
@@ -209,8 +209,10 @@ describe('native wallpaper API', () => {
       new Request(`https://example.com/api/wallpaper?${query}`),
     );
 
-    expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({ error: 'native_scene_too_large' });
+    expect(response.status).toBe(200);
+    const scene = await response.json();
+
+    expect(scene.commands.length).toBeLessThanOrEqual(600);
     expect(response.headers.get('cache-control')).toContain('no-store');
   });
 

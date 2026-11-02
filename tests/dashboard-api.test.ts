@@ -241,7 +241,7 @@ describe('dashboard API', () => {
     expect(elements.get('timeRange')?.value).toBe('month');
     expect(elements.get('presentation')?.value).toBe('hybrid');
     expect(elements.get('lockScreenProfile')?.value).toBe('large-clock');
-    expect(elements.get('eventCount')?.value).toBe('2');
+    expect(elements.get('eventCount')?.value).toBe('5');
   });
 
   it('discards an initial dashboard response after switching accounts', async () => {

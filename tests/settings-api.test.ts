@@ -25,7 +25,7 @@ describe('settings API', () => {
       presentation: 'calendar',
       lockScreenProfile: 'standard',
       viewMode: 'month',
-      eventCount: 2,
+      eventCount: 5,
     });
     expect(body.wallpaperOptions.timeRanges).toContain('year');
     expect(body.wallpaperOptions.presentations).toContain('hybrid');
@@ -43,7 +43,7 @@ describe('settings API', () => {
       'rosewood',
     ]);
     expect(body.themes).not.toContain('minimal');
-    expect(body.wallpaperOptions.eventCounts).toEqual([1, 2, 3, 4, 5]);
+    expect(body.wallpaperOptions.eventCounts).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it('updates arbitrary dimensions and accepts a shared preset', async () => {
@@ -79,7 +79,7 @@ describe('settings API', () => {
     });
   });
 
-  it.each([0, 6, -1, 2.5, '3', null, [], {}])(
+  it.each([0, 9, -1, 2.5, '3', null, [], {}])(
     'rejects invalid event count %j atomically',
     async (eventCount) => {
       await seedLegacyUser();

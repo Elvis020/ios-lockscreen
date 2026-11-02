@@ -36,7 +36,6 @@ export default async function handler(req: Request) {
         selectedEventIds: result.user.selectedEventIds,
         googleCategoryOverrides: result.user.googleCategoryOverrides,
         totalEvents: result.user.events.length + result.user.selectedEventIds.length,
-        maximumEvents: 7,
       });
     }
 
