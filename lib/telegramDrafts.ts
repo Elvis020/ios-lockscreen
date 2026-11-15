@@ -30,6 +30,7 @@ export interface TelegramEventOriginal {
   date: string;
   source: 'manual';
   createdAt: string;
+  recurrence?: EventRecurrence;
 }
 
 export interface TelegramEditMenu {

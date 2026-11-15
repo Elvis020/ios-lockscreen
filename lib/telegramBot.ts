@@ -667,6 +667,7 @@ async function processEditMenuCallback(
         chatId: chat,
         name: event.name,
         date: event.date,
+        recurrence: event.recurrence ?? 'none',
         operation: 'edit',
         step: 'review',
         original: {
@@ -675,6 +676,7 @@ async function processEditMenuCallback(
           date: event.date,
           source: event.source,
           createdAt: event.createdAt,
+          recurrence: event.recurrence ?? 'none',
         },
       },
       completion,
@@ -821,7 +823,6 @@ async function processEventCallback(
     }
 
     if (
-      draft.operation !== 'edit' &&
       draft.step === 'review' &&
       (action === 'once' ||
         action === 'weekly' ||
@@ -1743,6 +1744,7 @@ async function runLinkedTelegramCommand(
           chatId: context.chatId,
           name: event.name,
           date: event.date,
+          recurrence: event.recurrence ?? 'none',
           operation: 'edit',
           step: 'review',
           original: {
@@ -1751,6 +1753,7 @@ async function runLinkedTelegramCommand(
             date: event.date,
             source: event.source,
             createdAt: event.createdAt,
+            recurrence: event.recurrence ?? 'none',
           },
         },
         completion,
@@ -2192,7 +2195,7 @@ export function draftReply(draft: TelegramEventDraft, origin: string): TelegramR
     const editing = draft.operation === 'edit';
 
     return htmlReply(
-      `<b>${editing ? 'Review changes' : 'Save this event?'}</b>\nEvent: <b>${escapeTelegramHtml(draft.name)}</b>\nDate: <b>${escapeTelegramHtml(formatTelegramEventDate(draft.date))}</b>${editing ? '' : `\nRepeats: <b>${draft.recurrence && draft.recurrence !== 'none' ? titleCase(draft.recurrence) : 'Once'}</b>`}\n${editing ? 'Nothing changes until you save.' : ''}`,
+      `<b>${editing ? 'Review changes' : 'Save this event?'}</b>\nEvent: <b>${escapeTelegramHtml(draft.name)}</b>\nDate: <b>${escapeTelegramHtml(formatTelegramEventDate(draft.date))}</b>\nRepeats: <b>${draft.recurrence && draft.recurrence !== 'none' ? titleCase(draft.recurrence) : 'Once'}</b>\n${editing ? 'Nothing changes until you save.' : ''}`,
       {
         inline_keyboard: [
           [
@@ -2211,18 +2214,14 @@ export function draftReply(draft: TelegramEventDraft, origin: string): TelegramR
                 ]
               : []),
           ],
-          ...(editing
-            ? []
-            : [
-                [
-                  { text: 'Once', callback_data: `${prefix}once` },
-                  { text: 'Weekly', callback_data: `${prefix}weekly` },
-                ],
-                [
-                  { text: 'Monthly', callback_data: `${prefix}monthly` },
-                  { text: 'Yearly', callback_data: `${prefix}yearly` },
-                ],
-              ]),
+          [
+            { text: 'Once', callback_data: `${prefix}once` },
+            { text: 'Weekly', callback_data: `${prefix}weekly` },
+          ],
+          [
+            { text: 'Monthly', callback_data: `${prefix}monthly` },
+            { text: 'Yearly', callback_data: `${prefix}yearly` },
+          ],
           [{ text: 'Change date', callback_data: `${prefix}date` }],
           [{ text: 'Cancel', callback_data: `${prefix}cancel` }],
         ],

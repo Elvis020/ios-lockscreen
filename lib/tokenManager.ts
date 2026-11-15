@@ -424,7 +424,8 @@ export async function saveTelegramEditDraft(
         current.name !== original.name ||
         current.date !== original.date ||
         current.source !== original.source ||
-        current.createdAt !== original.createdAt
+        current.createdAt !== original.createdAt ||
+        (current.recurrence ?? 'none') !== (original.recurrence ?? 'none')
       ) {
         const sets: RedisFencedSet[] = [];
 
@@ -441,7 +442,12 @@ export async function saveTelegramEditDraft(
         return 'conflict';
       }
 
-      user.events[eventIndex] = { ...current, name: active.name, date: active.date };
+      user.events[eventIndex] = {
+        ...current,
+        name: active.name,
+        date: active.date,
+        recurrence: active.recurrence ?? 'none',
+      };
       const wallpaperKey = user.wallpaperKey ?? generateUUID();
 
       user.wallpaperKey = wallpaperKey;

@@ -656,7 +656,11 @@ describe('Telegram commands', () => {
 
   it('edits a snapshot-selected event safely after the event list is reordered', async () => {
     const first = manualEvent('first', 'First');
-    const second = { ...manualEvent('second', 'Second'), date: '2026-12-02' };
+    const second = {
+      ...manualEvent('second', 'Second'),
+      date: '2026-12-02',
+      recurrence: 'monthly' as const,
+    };
 
     await seedLinkedUser({ events: [first, second] });
     const { processTelegramUpdate } = await import('../lib/telegramBot');
@@ -675,6 +679,8 @@ describe('Telegram commands', () => {
     const review = deliveryBody(1);
     const { getTelegramDraft } = await import('../lib/telegramDrafts');
     const draft = (await getTelegramDraft('42'))!;
+
+    expect(review.text).toContain('Repeats: <b>Monthly</b>');
 
     expect(review.reply_markup.inline_keyboard[0][1].web_app.url).toContain(
       `draft=${draft.id}&field=name`,
@@ -736,7 +742,7 @@ describe('Telegram commands', () => {
 
     await processTelegramUpdate(telegramUpdate('/edit 1'), 'https://example.com');
     const review = deliveryBody(0);
-    const cancel = review.reply_markup.inline_keyboard[2][0].callback_data;
+    const cancel = review.reply_markup.inline_keyboard.at(-1)[0].callback_data;
 
     expect(review.text).toContain('Review changes');
     expect(
@@ -767,6 +773,47 @@ describe('Telegram commands', () => {
 
     expect((await getUser('owner'))?.events).toHaveLength(7);
     expect(deliveryBody(4).text).toContain('Event updated');
+  });
+
+  it('defaults an older event to Once and saves a changed recurrence on edit', async () => {
+    await redis.set('user:owner', {
+      ...userRecord(),
+      events: [
+        {
+          id: 'legacy',
+          name: 'Legacy appointment',
+          date: '2026-11-01',
+          source: 'manual',
+          createdAt: '2026-10-23T00:00:00.000Z',
+          category: 'general',
+        },
+      ],
+    });
+    await redis.set('telegram:user:42', 'owner');
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getTelegramDraft } = await import('../lib/telegramDrafts');
+    const { getUser } = await import('../lib/tokenManager');
+
+    await processTelegramUpdate(telegramUpdate('/edit M1'), 'https://example.com');
+
+    expect(deliveryBody(0).text).toContain('Repeats: <b>Once</b>');
+    const monthly = deliveryBody(0).reply_markup.inline_keyboard[2][0].callback_data;
+
+    await processTelegramUpdate(
+      eventCallback(monthly, 'monthly-edit'),
+      'https://example.com',
+    );
+
+    const draft = (await getTelegramDraft('42'))!;
+
+    expect(deliveryBody(1).text).toContain('Repeats: <b>Monthly</b>');
+    expect((await getUser('owner'))?.events[0].recurrence).toBe('none');
+    await processTelegramUpdate(
+      eventCallback(`ev:${draft.id}:${draft.revision}:save`, 'save-monthly-edit'),
+      'https://example.com',
+    );
+
+    expect((await getUser('owner'))?.events[0].recurrence).toBe('monthly');
   });
 
   it('rejects malformed, stale, and unauthorized edit callbacks without creating a draft', async () => {
