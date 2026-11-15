@@ -48,6 +48,7 @@ import {
   parseTelegramEventInput,
   updateTelegramDraftDate,
   updateTelegramDraftName,
+  updateTelegramDraftRecurrence,
   updateTelegramDraftStep,
   type TelegramEventDraft,
 } from './telegramDrafts';
@@ -122,6 +123,7 @@ export interface TelegramMessageOptions {
 
 interface LinkedCommandResult extends TelegramProcessingResult {
   reply: TelegramReply;
+  extraReplies?: TelegramReply[];
   themeSelector?: { themes: import('./preferences').WallpaperTheme[] };
 }
 
@@ -288,13 +290,36 @@ export async function processTelegramUpdate(
       await sendTelegramThemeSelector(chatId, result.reply, result.themeSelector);
     } else {
       await sendTelegramReply(chatId, result.reply);
+
+      for (const reply of result.extraReplies ?? []) {
+        await sendTelegramReply(chatId, reply);
+      }
     }
 
     return { completionCommitted: result.completionCommitted };
   } catch (error) {
     const message = error instanceof Error ? error.message : '';
-    const reply =
+    const reconnect =
       error instanceof GoogleSyncError
+        ? error.kind === 'reconnect'
+        : message === 'Google account must be reconnected';
+    const reply = reconnect
+      ? htmlReply(
+          '<b>Reconnect Google Calendar</b>\nYour Google connection needs a fresh sign-in. Tap below to continue.',
+          {
+            inline_keyboard: [
+              [
+                {
+                  text: 'Reconnect Google',
+                  web_app: {
+                    url: `${calendarOrigin(origin)}/api/telegram/app?v=20261107-reconnect&google=reconnect`,
+                  },
+                },
+              ],
+            ],
+          },
+        )
+      : error instanceof GoogleSyncError
         ? htmlReply(
             [
               '<b>Google Calendar needs attention</b>',
@@ -681,7 +706,7 @@ async function processEventCallback(
     const chatId = callback.message?.chat?.id;
     const userId = callback.from?.id;
     const match = callback.data?.match(
-      /^ev:([A-Za-z0-9_-]{16}):([A-Za-z0-9_-]{11}):(save|name|date|today|tomorrow|monday|cancel)$/,
+      /^ev:([A-Za-z0-9_-]{16}):([A-Za-z0-9_-]{11}):(save|name|date|today|tomorrow|monday|once|weekly|monthly|yearly|cancel)$/,
     );
     const [, id, revision, action] = match ?? [];
 
@@ -753,10 +778,24 @@ async function processEventCallback(
         return { completionCommitted: false };
       }
 
-      acknowledgement = 'Send a new name.';
+      acknowledgement = 'Edit the current name.';
       await sendTelegramReply(
         chat,
-        htmlReply('<b>Change event name</b>\nSend the new name only.'),
+        htmlReply(
+          '<b>Change event name</b>\nOpen the editor to update the current name.',
+          {
+            inline_keyboard: [
+              [
+                {
+                  text: 'Edit name',
+                  web_app: {
+                    url: `${calendarOrigin(origin)}/api/telegram/calendar?draft=${encodeURIComponent(updated.id)}&field=name`,
+                  },
+                },
+              ],
+            ],
+          },
+        ),
       );
 
       return { completionCommitted: Boolean(completion) };
@@ -775,6 +814,30 @@ async function processEventCallback(
       }
 
       acknowledgement = 'Choose a new date.';
+      await sendTelegramReply(chat, draftReply(updated, origin));
+
+      return { completionCommitted: Boolean(completion) };
+    }
+
+    if (
+      draft.operation !== 'edit' &&
+      draft.step === 'review' &&
+      (action === 'once' ||
+        action === 'weekly' ||
+        action === 'monthly' ||
+        action === 'yearly')
+    ) {
+      const updated = await updateTelegramDraftRecurrence(
+        telegramUserId,
+        id,
+        revision,
+        action === 'once' ? 'none' : action,
+        completion,
+      );
+
+      if (!updated) return { completionCommitted: false };
+
+      acknowledgement = 'Repeat option selected.';
       await sendTelegramReply(chat, draftReply(updated, origin));
 
       return { completionCommitted: Boolean(completion) };
@@ -1202,41 +1265,55 @@ async function runLinkedTelegramCommand(
       };
     }
 
-    return {
-      reply: htmlReply(
-        [
-          '<b>Upcoming events</b>',
-          '',
-          ...events
-            .slice(0, 5)
-            .map((event) => {
-              const metadata = [
-                formatUpcomingEventDate(event.date, today),
-                event.source === 'manual' ? 'Manual' : 'Google',
-                ...(event.category === 'general' ? [] : [titleCase(event.category)]),
-                ...(event.source === 'manual' &&
-                event.recurrence &&
-                event.recurrence !== 'none'
-                  ? [`Repeats ${event.recurrence}`]
-                  : []),
-              ];
+    const entries = events.map((event, index) => {
+      const metadata = [
+        formatUpcomingEventDate(event.date, today),
+        event.source === 'manual' ? 'Manual' : 'Google',
+        ...(event.category === 'general' ? [] : [titleCase(event.category)]),
+        ...(event.source === 'manual' && event.recurrence && event.recurrence !== 'none'
+          ? [`Repeats ${event.recurrence}`]
+          : []),
+      ];
 
-              return `<b>${escapeTelegramHtml(event.name)}</b>\n${metadata.map(escapeTelegramHtml).join(' · ')} · <code>${escapeTelegramHtml(event.stableRef)}</code>`;
-            })
-            .flatMap((event, index) => (index === 0 ? [event] : ['', event])),
-          '',
-          ...(events.length > 5
-            ? [`+${events.length - 5} more · Manage all events below.`, '']
-            : []),
-          ...(events.some((event) => event.source === 'manual')
-            ? ['Manual events: <code>/edit</code>.']
-            : []),
-          ...(events.some((event) => event.source === 'google')
-            ? ['Google selections: control panel.']
-            : []),
-        ].join('\n'),
-        manageButton,
-      ),
+      return `${index + 1}. <b>${escapeTelegramHtml(event.name)}</b>\n    ${metadata.map(escapeTelegramHtml).join(' · ')} · <code>${escapeTelegramHtml(event.stableRef)}</code>`;
+    });
+    const pages: string[] = [];
+    let page = `<b>Upcoming events</b> · ${events.length} tracked`;
+
+    for (const entry of entries) {
+      if (page.length + entry.length + 2 > 3500) {
+        pages.push(page);
+        page = `<b>Upcoming events</b> · continued\n\n${entry}`;
+      } else {
+        page += `\n\n${entry}`;
+      }
+    }
+
+    const guidance = [
+      ...(events.some((event) => event.source === 'manual')
+        ? ['Manual: <code>/edit</code>']
+        : []),
+      ...(events.some((event) => event.source === 'google')
+        ? ['Google: control panel']
+        : []),
+    ].join(' · ');
+
+    if (page.length + guidance.length + 2 > 3500) {
+      pages.push(page);
+      page = `<b>Upcoming events</b> · continued\n\n${guidance}`;
+    } else {
+      page += `\n\n${guidance}`;
+    }
+
+    pages.push(page);
+
+    return {
+      reply: htmlReply(pages[0], pages.length === 1 ? manageButton : undefined),
+      extraReplies: pages
+        .slice(1)
+        .map((text, index) =>
+          htmlReply(text, index === pages.length - 2 ? manageButton : undefined),
+        ),
       completionCommitted: false,
     };
   }
@@ -2115,7 +2192,7 @@ function draftReply(draft: TelegramEventDraft, origin: string): TelegramReply {
     const editing = draft.operation === 'edit';
 
     return htmlReply(
-      `<b>${editing ? 'Review changes' : 'Save this event?'}</b>\nEvent: <b>${escapeTelegramHtml(draft.name)}</b>\nDate: <b>${escapeTelegramHtml(formatTelegramEventDate(draft.date))}</b>\n${editing ? 'Nothing changes until you save.' : ''}`,
+      `<b>${editing ? 'Review changes' : 'Save this event?'}</b>\nEvent: <b>${escapeTelegramHtml(draft.name)}</b>\nDate: <b>${escapeTelegramHtml(formatTelegramEventDate(draft.date))}</b>${editing ? '' : `\nRepeats: <b>${draft.recurrence && draft.recurrence !== 'none' ? titleCase(draft.recurrence) : 'Once'}</b>`}\n${editing ? 'Nothing changes until you save.' : ''}`,
       {
         inline_keyboard: [
           [
@@ -2123,8 +2200,29 @@ function draftReply(draft: TelegramEventDraft, origin: string): TelegramReply {
               text: editing ? 'Save changes' : 'Save event',
               callback_data: `${prefix}save`,
             },
-            ...(editing ? [{ text: 'Change name', callback_data: `${prefix}name` }] : []),
+            ...(editing
+              ? [
+                  {
+                    text: 'Change name',
+                    web_app: {
+                      url: `${calendarOrigin(origin)}/api/telegram/calendar?draft=${encodeURIComponent(draft.id)}&field=name`,
+                    },
+                  },
+                ]
+              : []),
           ],
+          ...(editing
+            ? []
+            : [
+                [
+                  { text: 'Once', callback_data: `${prefix}once` },
+                  { text: 'Weekly', callback_data: `${prefix}weekly` },
+                ],
+                [
+                  { text: 'Monthly', callback_data: `${prefix}monthly` },
+                  { text: 'Yearly', callback_data: `${prefix}yearly` },
+                ],
+              ]),
           [{ text: 'Change date', callback_data: `${prefix}date` }],
           [{ text: 'Cancel', callback_data: `${prefix}cancel` }],
         ],
@@ -2254,7 +2352,7 @@ function onboardingReply(origin: string, created: boolean): TelegramReply {
         [
           {
             text: 'Open Calendar Lockscreen',
-            web_app: { url: `${calendarOrigin(origin)}/api/telegram/app` },
+            web_app: { url: `${calendarOrigin(origin)}/api/telegram/app?v=20261107` },
           },
         ],
       ],
@@ -2268,7 +2366,7 @@ function manageEventsButton(origin: string): TelegramInlineKeyboardMarkup {
       [
         {
           text: 'Manage events',
-          web_app: { url: `${calendarOrigin(origin)}/api/telegram/app` },
+          web_app: { url: `${calendarOrigin(origin)}/api/telegram/app?v=20261107` },
         },
       ],
     ],
@@ -2276,7 +2374,7 @@ function manageEventsButton(origin: string): TelegramInlineKeyboardMarkup {
 }
 
 function googleSyncReply(result: GoogleSyncResult, origin: string): TelegramReply {
-  const appUrl = `${calendarOrigin(origin)}/api/telegram/app`;
+  const appUrl = `${calendarOrigin(origin)}/api/telegram/app?v=20261107`;
   const button = (text: string): TelegramInlineKeyboardMarkup => ({
     inline_keyboard: [[{ text, web_app: { url: appUrl } }]],
   });

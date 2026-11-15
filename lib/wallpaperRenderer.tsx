@@ -533,25 +533,17 @@ function EventList({ model }: { model: WallpaperModel }): ReactElement {
       }}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: layout.rowGap }}>
-        {chunk(visible, layout.columns).map((row) => (
-          <div key={row[0].id} style={{ display: 'flex', gap: layout.columnGap }}>
-            {row.map((event) => (
-              <div
-                key={event.id}
-                style={{ display: 'flex', width: layout.cellWidth, flexShrink: 0 }}
-              >
-                <EventRow
-                  event={event}
-                  theme={model.theme}
-                  focused={event.focused}
-                  compact={layout.compact}
-                  height={layout.rowHeight}
-                  emphasizeCountdown={layout.compact}
-                  layout={layout}
-                />
-              </div>
-            ))}
-          </div>
+        {visible.map((event) => (
+          <EventRow
+            key={event.id}
+            event={event}
+            theme={model.theme}
+            focused={event.focused}
+            compact={layout.compact}
+            height={layout.rowHeight}
+            emphasizeCountdown={layout.compact}
+            layout={layout}
+          />
         ))}
       </div>
       {overflow ? (
@@ -605,7 +597,7 @@ function EventRow({
           display: 'flex',
           alignItems: 'baseline',
           justifyContent: 'space-between',
-          gap: layout?.columns === 2 ? 16 : 28,
+          gap: 28,
         }}
       >
         {focused ? (
@@ -907,13 +899,3 @@ const columnStyle: CSSProperties = {
   display: 'flex',
   flexDirection: 'column',
 };
-
-function chunk<T>(items: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
-  }
-
-  return chunks;
-}

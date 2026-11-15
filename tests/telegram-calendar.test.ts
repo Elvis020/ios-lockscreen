@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryRedis } from './helpers/inMemoryRedis';
 
@@ -48,6 +49,199 @@ describe('Telegram calendar Mini App', () => {
     expect(html).toContain('selectionRequestId = createRequestId()');
     expect(html).toContain('const requestId = selectionRequestId');
     expect(html).not.toContain('opaque-draft');
+  });
+
+  it('opens the name field with existing text and submits the edited value', async () => {
+    const { default: handler } = await import('../api/telegram/calendar');
+    const html = await (
+      await handler(new Request('https://example.com/api/telegram/calendar'))
+    ).text();
+    const elements = new Map<string, any>();
+    const querySelector = (selector: string) => {
+      if (!elements.has(selector)) {
+        const listeners: Record<string, () => Promise<void>> = {};
+
+        elements.set(selector, {
+          value: '',
+          disabled: true,
+          hidden: false,
+          textContent: '',
+          focus: vi.fn(),
+          listeners,
+          addEventListener: (name: string, callback: () => Promise<void>) => {
+            listeners[name] = callback;
+          },
+        });
+      }
+
+      return elements.get(selector);
+    };
+    const close = vi.fn();
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ name: 'Dentist & review', revision: 'revision-123' }),
+        ),
+      )
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
+    const script = html.match(/<script nonce="[^"]+">([\s\S]*?)<\/script>/)![1];
+
+    runInNewContext(script, {
+      document: { querySelector },
+      URLSearchParams,
+      fetch: request,
+      window: {
+        location: {
+          pathname: '/api/telegram/calendar',
+          search: '?draft=draft-123456&field=name',
+        },
+        crypto: { randomUUID: () => 'request-123456' },
+        Telegram: {
+          WebApp: {
+            initData: 'signed',
+            ready() {},
+            expand() {},
+            setHeaderColor() {},
+            setBackgroundColor() {},
+            close,
+          },
+        },
+      },
+    });
+    await vi.waitFor(() =>
+      expect(querySelector('#event-name').value).toBe('Dentist & review'),
+    );
+
+    expect(querySelector('.calendar').hidden).toBe(true);
+    expect(querySelector('#event-name').disabled).toBe(false);
+    querySelector('#event-name').value = 'Dentist & follow-up';
+    await querySelector('#review-name').listeners.click();
+
+    expect(JSON.parse(request.mock.calls[1][1].body)).toMatchObject({
+      action: 'name',
+      name: 'Dentist & follow-up',
+      revision: 'revision-123',
+    });
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('prefills the authenticated edit name and reviews changes without saving the event', async () => {
+    await seedLinkedUser();
+    const { createTelegramDraft, getTelegramDraft } =
+      await import('../lib/telegramDrafts');
+    const { default: handler } = await import('../api/telegram/calendar');
+    const draft = await createTelegramDraft({
+      token: 'owner',
+      userId: '42',
+      chatId: '42',
+      name: 'Dentist & review',
+      date: '2026-12-01',
+      operation: 'edit',
+      step: 'review',
+      original: manualEvent('dentist', 'Dentist & review'),
+    });
+    const initData = await signedInitData(42);
+    const bootstrap = await handler(
+      postRequest({
+        action: 'bootstrap-name',
+        draftId: draft.id,
+        initData,
+      }),
+    );
+
+    expect(await bootstrap.json()).toEqual({
+      name: 'Dentist & review',
+      revision: draft.revision,
+    });
+
+    const body = {
+      action: 'name',
+      draftId: draft.id,
+      initData,
+      revision: draft.revision,
+      name: 'Dentist & follow-up',
+      requestId: 'name-request-123',
+    };
+    const response = await handler(postRequest(body));
+    const retry = await handler(postRequest(body));
+
+    expect(response.status).toBe(200);
+    expect(await retry.json()).toEqual({ ok: true, duplicate: true });
+    expect(await getTelegramDraft('42')).toMatchObject({
+      name: 'Dentist & follow-up',
+      date: '2026-12-01',
+      step: 'review',
+    });
+    expect((await redis.get<{ events: unknown[] }>('user:owner'))?.events).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(telegramDeliveryBody().text).toContain('Dentist &amp; follow-up');
+  });
+
+  it('rejects stale name revisions and invalid names without changing the draft', async () => {
+    await seedLinkedUser();
+    const { createTelegramDraft, getTelegramDraft } =
+      await import('../lib/telegramDrafts');
+    const { default: handler } = await import('../api/telegram/calendar');
+    const draft = await createTelegramDraft({
+      token: 'owner',
+      userId: '42',
+      chatId: '42',
+      name: 'Dentist',
+      date: '2026-12-01',
+      operation: 'edit',
+      step: 'review',
+      original: manualEvent('dentist', 'Dentist'),
+    });
+    const initData = await signedInitData(42);
+    const body = {
+      action: 'name',
+      draftId: draft.id,
+      initData,
+      revision: 'stale-revision',
+      name: 'Changed',
+      requestId: 'name-stale-123',
+    };
+
+    expect((await handler(postRequest({ ...body, name: '  ' }))).status).toBe(400);
+    expect((await handler(postRequest(body))).status).toBe(409);
+    expect(await getTelegramDraft('42')).toEqual(draft);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not expose a draft name to an unlinked identity or a non-edit draft', async () => {
+    await seedLinkedUser();
+    const { createTelegramDraft } = await import('../lib/telegramDrafts');
+    const { default: handler } = await import('../api/telegram/calendar');
+    const draft = await createTelegramDraft({
+      token: 'owner',
+      userId: '42',
+      chatId: '42',
+      name: 'Private name',
+    });
+
+    expect(
+      (
+        await handler(
+          postRequest({
+            action: 'bootstrap-name',
+            draftId: draft.id,
+            initData: await signedInitData(43),
+          }),
+        )
+      ).status,
+    ).toBe(409);
+    expect(
+      (
+        await handler(
+          postRequest({
+            action: 'bootstrap-name',
+            draftId: draft.id,
+            initData: await signedInitData(42),
+          }),
+        )
+      ).status,
+    ).toBe(409);
   });
 
   it('accepts a verified linked user, updates only the draft, and sends confirmation', async () => {

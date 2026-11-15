@@ -99,15 +99,16 @@ export function buildWallpaperModel(options: {
           const date = nextOccurrenceOnOrAfter(event, currentDate);
 
           return date
-            ? [
-                {
-                  ...event,
-                  date,
-                  stableRef: `M${index + 1}`,
-                  source: 'manual' as const,
-                  category: event.category ?? 'general',
-                },
-              ]
+            ? (event.recurrence === 'weekly'
+                ? [date, dateAtPeriodDay(date, 8)]
+                : [date]
+              ).map((occurrenceDate) => ({
+                ...event,
+                date: occurrenceDate,
+                stableRef: `M${index + 1}`,
+                source: 'manual' as const,
+                category: event.category ?? 'general',
+              }))
             : [];
         }),
         ...user.selectedEventIds.flatMap((id, index) => {

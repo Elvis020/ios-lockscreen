@@ -6,10 +6,11 @@ import {
   formatTelegramEventDate,
   getTelegramDraft,
   updateTelegramDraftDate,
+  updateTelegramDraftName,
 } from '../../lib/telegramDrafts';
 import { verifyTelegramInitData } from '../../lib/telegramMiniAppAuth';
 import { getUser } from '../../lib/tokenManager';
-import { isValidDateString } from '../../lib/validation';
+import { normalizeEventName, isValidDateString } from '../../lib/validation';
 
 export const config = { runtime: 'edge' };
 
@@ -75,12 +76,23 @@ export default async function handler(req: Request): Promise<Response> {
       return jsonResponse({ error: 'Telegram link is unavailable' }, 401);
     }
 
-    if (body.action === 'bootstrap') {
-      if (!isActiveDateStep(draft)) {
+    const editingName = body.action === 'bootstrap-name' || body.action === 'name';
+    const activeStep = editingName
+      ? draft.operation === 'edit' &&
+        Boolean(draft.date) &&
+        (draft.step === 'name' || draft.step === 'review')
+      : isActiveDateStep(draft);
+
+    if (body.action === 'bootstrap' || body.action === 'bootstrap-name') {
+      if (!activeStep) {
         return jsonResponse({ error: 'Event draft is unavailable' }, 409);
       }
 
-      return jsonResponse({ timeZone: user.timeZone });
+      return jsonResponse(
+        editingName
+          ? { name: draft.name, revision: draft.revision }
+          : { timeZone: user.timeZone },
+      );
     }
 
     const requestKey = `telegram:calendar:request:${verified.userId}:${body.requestId}`;
@@ -94,7 +106,7 @@ export default async function handler(req: Request): Promise<Response> {
       return jsonResponse({ error: 'Calendar request is still processing' }, 409);
     }
 
-    if (!isActiveDateStep(draft)) {
+    if (!activeStep) {
       return jsonResponse({ error: 'Event draft is unavailable' }, 409);
     }
 
@@ -122,12 +134,22 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonResponse({ error: 'Please wait before choosing another date' }, 429);
       }
 
-      const updated = await updateTelegramDraftDate(
-        verified.userId,
-        draft.id,
-        body.date,
-        draft.revision,
-      );
+      const updated =
+        body.action === 'name'
+          ? await updateTelegramDraftName(
+              verified.userId,
+              draft.id,
+              body.name,
+              body.revision,
+              undefined,
+              draft.step === 'review' ? 'review' : 'name',
+            )
+          : await updateTelegramDraftDate(
+              verified.userId,
+              draft.id,
+              body.date,
+              draft.revision,
+            );
 
       if (!updated) {
         await deleteRedisKeyIfValue(redis, requestKey, requestLease);
@@ -143,7 +165,7 @@ export default async function handler(req: Request): Promise<Response> {
         [
           `<b>${editing ? 'Review changes' : 'Save this event?'}</b>`,
           `Event: <b>${escapeTelegramHtml(updated.name)}</b>`,
-          `Date: <b>${escapeTelegramHtml(formatTelegramEventDate(body.date))}</b>`,
+          `Date: <b>${escapeTelegramHtml(formatTelegramEventDate(updated.date!))}</b>`,
         ].join('\n'),
         {
           parseMode: 'HTML',
@@ -156,7 +178,16 @@ export default async function handler(req: Request): Promise<Response> {
                 },
               ],
               ...(editing
-                ? [[{ text: 'Change name', callback_data: `${prefix}name` }]]
+                ? [
+                    [
+                      {
+                        text: 'Change name',
+                        web_app: {
+                          url: `${new URL(req.url).origin}/api/telegram/calendar?draft=${encodeURIComponent(updated.id)}&field=name`,
+                        },
+                      },
+                    ],
+                  ]
                 : []),
               [{ text: 'Change date', callback_data: `${prefix}date` }],
               [{ text: 'Cancel', callback_data: `${prefix}cancel` }],
@@ -194,13 +225,26 @@ interface CalendarDateRequestBody {
   initData: string;
 }
 
-interface CalendarBootstrapRequestBody {
-  action: 'bootstrap';
+interface CalendarBootstrapRequestBody<Action extends string> {
+  action: Action;
   draftId: string;
   initData: string;
 }
 
-type CalendarRequestBody = CalendarDateRequestBody | CalendarBootstrapRequestBody;
+interface CalendarNameRequestBody {
+  action: 'name';
+  draftId: string;
+  initData: string;
+  requestId: string;
+  name: string;
+  revision: string;
+}
+
+type CalendarRequestBody =
+  | CalendarDateRequestBody
+  | CalendarBootstrapRequestBody<'bootstrap'>
+  | CalendarBootstrapRequestBody<'bootstrap-name'>
+  | CalendarNameRequestBody;
 
 async function parseCalendarRequest(
   req: Request,
@@ -223,7 +267,16 @@ async function parseCalendarRequest(
     typeof body !== 'object' ||
     Array.isArray(body) ||
     Object.keys(body).some(
-      (key) => !['action', 'draftId', 'date', 'requestId', 'initData'].includes(key),
+      (key) =>
+        ![
+          'action',
+          'draftId',
+          'date',
+          'requestId',
+          'initData',
+          'name',
+          'revision',
+        ].includes(key),
     )
   ) {
     return null;
@@ -233,7 +286,8 @@ async function parseCalendarRequest(
   const initData = typeof body.initData === 'string' ? body.initData : '';
 
   if (
-    (body.action !== undefined && body.action !== 'bootstrap') ||
+    (body.action !== undefined &&
+      !['bootstrap', 'bootstrap-name', 'name'].includes(String(body.action))) ||
     !/^[A-Za-z0-9_-]{12,32}$/.test(draftId) ||
     !initData ||
     initData.length > 4096
@@ -241,16 +295,48 @@ async function parseCalendarRequest(
     return null;
   }
 
-  if (body.action === 'bootstrap') {
-    if (body.date !== undefined || body.requestId !== undefined) {
+  if (body.action === 'bootstrap' || body.action === 'bootstrap-name') {
+    if (
+      body.date !== undefined ||
+      body.requestId !== undefined ||
+      body.name !== undefined ||
+      body.revision !== undefined
+    ) {
       return null;
     }
 
-    return { action: 'bootstrap', draftId, initData };
+    return { action: body.action, draftId, initData };
   }
 
   const date = typeof body.date === 'string' ? body.date : '';
   const requestId = typeof body.requestId === 'string' ? body.requestId : '';
+
+  if (body.action === 'name') {
+    const name = normalizeEventName(body.name);
+
+    if (
+      !name ||
+      typeof body.revision !== 'string' ||
+      !/^[A-Za-z0-9_-]{8,80}$/.test(body.revision) ||
+      !/^[A-Za-z0-9_-]{8,80}$/.test(requestId) ||
+      body.date !== undefined
+    ) {
+      return null;
+    }
+
+    return {
+      action: 'name',
+      draftId,
+      initData,
+      requestId,
+      name,
+      revision: body.revision,
+    };
+  }
+
+  if (body.name !== undefined || body.revision !== undefined) {
+    return null;
+  }
 
   if (!isValidDateString(date) || !/^[A-Za-z0-9_-]{8,80}$/.test(requestId)) {
     return null;
@@ -363,6 +449,30 @@ function calendarPage(nonce: string): string {
       .day.blank { pointer-events: none; }
       .selection { min-height: 22px; margin: 16px 2px 0; color: #A1A1A1; font-size: 14px; }
       .primary { width: 100%; margin-top: 12px; padding: 13px 16px; border: 0; border-radius: 8px; background: #E5E5E5; color: #1C1C1C; font-weight: 800; }
+      [hidden] {
+        display: none !important;
+      }
+      .name-editor {
+        margin-top: 20px;
+      }
+      .name-editor label {
+        display: block;
+        margin-bottom: 8px;
+      }
+      .name-editor input {
+        width: 100%;
+        padding: 12px;
+        border: 1px solid #646464;
+        border-radius: 8px;
+        background: #232323;
+        color: #E5E5E5;
+        font: inherit;
+        font-size: 16px;
+      }
+      .name-editor input:focus {
+        outline: 2px solid #E5E5E5;
+        outline-offset: 2px;
+      }
       .primary:disabled { opacity: 0.42; }
       .status { min-height: 20px; margin: 10px 2px 0; color: #A1A1A1; font-size: 13px; }
     </style>
@@ -371,6 +481,12 @@ function calendarPage(nonce: string): string {
     <main>
       <p class="eyebrow">Calendar Lockscreen</p>
       <h1>Choose a date</h1>
+      <section class="name-editor" hidden>
+        <label for="event-name">Event name</label>
+        <input id="event-name" maxlength="50" autocomplete="off" disabled>
+        <button class="primary" id="review-name" type="button" disabled>Review changes</button>
+        <p class="status" id="name-status" role="status" aria-live="polite"></p>
+      </section>
       <section class="calendar" aria-label="Date picker">
         <div class="toolbar">
           <button class="icon" id="previous" type="button" aria-label="Previous month">‹</button>
@@ -584,7 +700,93 @@ function calendarPage(nonce: string): string {
           : String(Date.now()) + Math.random().toString(36).slice(2);
       }
 
-      initializeCalendar();
+      const nameMode = new URLSearchParams(window.location.search).get('field') === 'name';
+      const nameInput = document.querySelector('#event-name');
+      const reviewName = document.querySelector('#review-name');
+      const nameStatus = document.querySelector('#name-status');
+      let nameRevision = '';
+      let nameRequestId = createRequestId();
+      let sendingName = false;
+
+      async function initializeName() {
+        document.querySelector('.calendar').hidden = true;
+        document.querySelector('.name-editor').hidden = false;
+        document.querySelector('h1').textContent = 'Edit event name';
+        document.title = 'Edit event name';
+
+        if (!draftId || !telegram || !telegram.initData) {
+          nameStatus.textContent = 'Open this editor from Telegram.';
+          return;
+        }
+
+        try {
+          const response = await fetch(window.location.pathname, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'bootstrap-name', draftId, initData: telegram.initData }),
+          });
+          const payload = await response.json();
+
+          if (!response.ok) {
+            throw new Error(payload.error || 'Could not open the event.');
+          }
+
+          nameInput.value = payload.name;
+          nameRevision = payload.revision;
+          nameInput.disabled = false;
+          reviewName.disabled = false;
+          nameStatus.textContent = 'Review your changes in chat before saving.';
+          nameInput.focus();
+        } catch (error) {
+          nameStatus.textContent = error instanceof Error ? error.message : 'Could not open the event.';
+        }
+      }
+
+      nameInput.addEventListener('input', function () {
+        nameRequestId = createRequestId();
+        reviewName.disabled = !nameInput.value.trim();
+      });
+
+      reviewName.addEventListener('click', async function () {
+        if (sendingName || !nameRevision || !nameInput.value.trim()) {
+          return;
+        }
+
+        sendingName = true;
+        nameInput.disabled = true;
+        reviewName.disabled = true;
+        nameStatus.textContent = 'Sending changes…';
+
+        try {
+          const response = await fetch(window.location.pathname, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'name', draftId, revision: nameRevision, name: nameInput.value,
+              requestId: nameRequestId, initData: telegram.initData,
+            }),
+          });
+          const payload = await response.json();
+
+          if (!response.ok) {
+            throw new Error(payload.error || 'Could not update the name. Reopen the editor to try again.');
+          }
+
+          nameStatus.textContent = 'Changes ready. Confirm the event in chat.';
+          telegram.close();
+        } catch (error) {
+          nameStatus.textContent = error instanceof Error ? error.message : 'Could not send changes.';
+          nameInput.disabled = false;
+          reviewName.disabled = false;
+          sendingName = false;
+        }
+      });
+
+      if (nameMode) {
+        initializeName();
+      } else {
+        initializeCalendar();
+      }
     </script>
   </body>
 </html>`;

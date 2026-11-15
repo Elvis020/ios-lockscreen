@@ -28,7 +28,7 @@ describe('Telegram commands', () => {
     vi.restoreAllMocks();
   });
 
-  it('bounds upcoming events and edit menus while keeping numbered edits', async () => {
+  it('shows every upcoming event while bounding edit menus and weekly summaries', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-24T12:00:00Z'));
     await seedLinkedUser({
@@ -39,8 +39,8 @@ describe('Telegram commands', () => {
     const { processTelegramUpdate } = await import('../lib/telegramBot');
 
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
-    expect(deliveryBody(0).text).toContain('+5 more · Manage all events below.');
-    expect(deliveryBody(0).text.match(/<code>M\d+<\/code>/g)).toHaveLength(5);
+    expect(deliveryBody(0).text).toContain('10. <b>Event 9</b>');
+    expect(deliveryBody(0).text.match(/<code>M\d+<\/code>/g)).toHaveLength(10);
     expect(deliveryBody(0).reply_markup.inline_keyboard[0][0].text).toBe('Manage events');
 
     await processTelegramUpdate(telegramUpdate('/edit'), 'https://example.com');
@@ -49,7 +49,7 @@ describe('Telegram commands', () => {
     expect(editKeyboard.filter((row: any[]) => row[0]?.callback_data)).toHaveLength(8);
     expect(editKeyboard.at(-1)?.[0]).toEqual({
       text: 'Manage events',
-      web_app: { url: 'https://example.com/api/telegram/app' },
+      web_app: { url: 'https://example.com/api/telegram/app?v=20261107' },
     });
     expect(deliveryBody(1).text).toContain('/edit NUMBER');
     await processTelegramUpdate(telegramUpdate('/edit 10'), 'https://example.com');
@@ -60,6 +60,27 @@ describe('Telegram commands', () => {
     expect(deliveryBody(3).text).toContain('+5 more');
     expect(deliveryBody(3).text.match(/M\d+ ·/g)).toHaveLength(5);
     expect(deliveryBody(3).reply_markup.inline_keyboard[0][0].text).toBe('Manage events');
+  });
+
+  it('sends long event lists in complete Telegram-sized pages', async () => {
+    await seedLinkedUser({
+      events: Array.from({ length: 90 }, (_, index) =>
+        manualEvent(`event-${index}`, `Event ${index + 1} with a longer title`),
+      ),
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
+
+    const pages = fetchMock.mock.calls.map((_, index) => deliveryBody(index));
+    const combined = pages.map((page) => page.text).join('\n');
+
+    expect(pages.length).toBeGreaterThan(1);
+    expect(pages.every((page) => page.text.length <= 3500)).toBe(true);
+    expect(combined.match(/<code>M\d+<\/code>/g)).toHaveLength(90);
+    expect(combined).toContain('90. <b>Event 90 with a longer title</b>');
+    expect(pages.slice(0, -1).every((page) => !page.reply_markup)).toBe(true);
+    expect(pages.at(-1)?.reply_markup.inline_keyboard[0][0].text).toBe('Manage events');
   });
 
   it('keeps the linked command compatibility API returning a string', async () => {
@@ -110,7 +131,7 @@ describe('Telegram commands', () => {
           [
             {
               text: 'Open Calendar Lockscreen',
-              web_app: { url: 'https://example.com/api/telegram/app' },
+              web_app: { url: 'https://example.com/api/telegram/app?v=20261107' },
             },
           ],
         ],
@@ -132,7 +153,7 @@ describe('Telegram commands', () => {
 
     expect(deliveryBody(0).reply_markup.inline_keyboard[0][0]).toEqual({
       text: 'Open Calendar Lockscreen',
-      web_app: { url: 'https://example.com/api/telegram/app' },
+      web_app: { url: 'https://example.com/api/telegram/app?v=20261107' },
     });
   });
 
@@ -153,7 +174,7 @@ describe('Telegram commands', () => {
           [
             {
               text: 'Connect Google Calendar',
-              web_app: { url: 'https://example.com/api/telegram/app' },
+              web_app: { url: 'https://example.com/api/telegram/app?v=20261107' },
             },
           ],
         ],
@@ -161,6 +182,35 @@ describe('Telegram commands', () => {
     });
     expect(deliveryBody(0).text).not.toContain('0 cached events');
     expect(result.completionCommitted).toBe(false);
+  });
+
+  it('offers Google sign-in when sync needs reauthorization', async () => {
+    await seedLinkedUser();
+    const { GoogleSyncError } = await import('../lib/calendar/googleErrors');
+    const service = await import('../lib/calendar/service');
+
+    vi.spyOn(service, 'syncGoogleEvents').mockRejectedValue(
+      new GoogleSyncError('reconnect'),
+    );
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+
+    await processTelegramUpdate(telegramUpdate('/sync'), 'https://example.com');
+
+    expect(deliveryBody(0)).toMatchObject({
+      text: expect.stringContaining('fresh sign-in'),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: 'Reconnect Google',
+              web_app: {
+                url: 'https://example.com/api/telegram/app?v=20261107-reconnect&google=reconnect',
+              },
+            },
+          ],
+        ],
+      },
+    });
   });
 
   it('sends actionable guidance when the Google Calendar API is disabled', async () => {
@@ -581,7 +631,14 @@ describe('Telegram commands', () => {
     await processTelegramUpdate(eventCallback(select), 'https://example.com');
 
     const review = deliveryBody(1);
-    const changeName = review.reply_markup.inline_keyboard[0][1].callback_data;
+    const { getTelegramDraft } = await import('../lib/telegramDrafts');
+    const draft = (await getTelegramDraft('42'))!;
+
+    expect(review.reply_markup.inline_keyboard[0][1].web_app.url).toContain(
+      `draft=${draft.id}&field=name`,
+    );
+    // Older messages with callback buttons remain usable.
+    const changeName = `ev:${draft.id}:${draft.revision}:name`;
 
     await processTelegramUpdate(
       eventCallback(changeName, 'edit-name'),
@@ -643,12 +700,13 @@ describe('Telegram commands', () => {
     expect(
       review.reply_markup.inline_keyboard
         .flat()
+        .filter(({ callback_data }: any) => callback_data)
         .map(({ callback_data }: any) => callback_data.length),
     ).toEqual(expect.arrayContaining([expect.any(Number)]));
     expect(
       review.reply_markup.inline_keyboard
         .flat()
-        .every(({ callback_data }: any) => callback_data.length <= 64),
+        .every(({ callback_data }: any) => !callback_data || callback_data.length <= 64),
     ).toBe(true);
 
     await processTelegramUpdate(eventCallback(cancel, 'discard'), 'https://example.com');
@@ -829,7 +887,7 @@ describe('Telegram commands', () => {
       [
         {
           text: 'Manage events',
-          web_app: { url: 'https://example.com/api/telegram/app' },
+          web_app: { url: 'https://example.com/api/telegram/app?v=20261107' },
         },
       ],
     ]);
@@ -867,6 +925,37 @@ describe('Telegram commands', () => {
     await processTelegramUpdate(eventCallback(saveCallback), 'https://example.com');
 
     expect(deliveryBody(1).text).toContain('Event saved');
+  });
+
+  it('lets a new event repeat weekly before it is saved', async () => {
+    await seedLinkedUser();
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getTelegramDraft } = await import('../lib/telegramDrafts');
+    const { getUser } = await import('../lib/tokenManager');
+
+    await processTelegramUpdate(
+      telegramUpdate('/add 2026-11-01 Weekly class'),
+      'https://example.com',
+    );
+
+    const repeat = deliveryBody(0).reply_markup.inline_keyboard[1][1].callback_data;
+
+    expect(deliveryBody(0).text).toContain('Repeats: <b>Once</b>');
+    await processTelegramUpdate(eventCallback(repeat), 'https://example.com');
+
+    const draft = await getTelegramDraft('42');
+
+    expect(draft?.recurrence).toBe('weekly');
+    expect(deliveryBody(1).text).toContain('Repeats: <b>Weekly</b>');
+    await processTelegramUpdate(
+      eventCallback(`ev:${draft!.id}:${draft!.revision}:save`),
+      'https://example.com',
+    );
+
+    expect((await getUser('owner'))?.events[0]).toMatchObject({
+      name: 'Weekly class',
+      recurrence: 'weekly',
+    });
   });
 
   it('updates presets and independent wallpaper dimensions', async () => {
@@ -1068,18 +1157,20 @@ describe('Telegram commands', () => {
 
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
-    expect(deliveryBody(0).text).toBe(
-      '<b>Upcoming events</b>\n\n' +
-        '<b>General event</b>\nTomorrow · Manual · <code>M2</code>\n\n' +
-        '<b>Launch &lt;&amp;&gt;</b>\nTomorrow · Manual · Work · Repeats yearly · <code>M1</code>\n\n' +
-        '<b>Google trip</b>\nMon, 2 Nov · Google · Travel · <code>G1</code>\n\n' +
-        'Manual events: <code>/edit</code>.\nGoogle selections: control panel.',
+    expect(deliveryBody(0).text).toContain(
+      '1. <b>General event</b>\n    Tomorrow · Manual · <code>M2</code>',
+    );
+    expect(deliveryBody(0).text).toContain(
+      '2. <b>Launch &lt;&amp;&gt;</b>\n    Tomorrow · Manual · Work · Repeats yearly · <code>M1</code>',
+    );
+    expect(deliveryBody(0).text).toContain(
+      '3. <b>Google trip</b>\n    Mon, 2 Nov · Google · Travel · <code>G1</code>',
     );
     expect(deliveryBody(0).reply_markup.inline_keyboard).toEqual([
       [
         {
           text: 'Manage events',
-          web_app: { url: 'https://example.com/api/telegram/app' },
+          web_app: { url: 'https://example.com/api/telegram/app?v=20261107' },
         },
       ],
     ]);
@@ -1101,18 +1192,18 @@ describe('Telegram commands', () => {
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
     expect(deliveryBody(0).text).toContain(
-      '<b>Today</b>\nToday · Manual · <code>M1</code>',
+      '1. <b>Today</b>\n    Today · Manual · <code>M1</code>',
     );
     expect(deliveryBody(0).text).toContain(
-      '<b>Tomorrow</b>\nTomorrow · Manual · <code>M2</code>',
+      '2. <b>Tomorrow</b>\n    Tomorrow · Manual · <code>M2</code>',
     );
     expect(deliveryBody(0).text).toContain(
-      '<b>Later</b>\nSat, 14 Nov · Manual · <code>M3</code>',
+      '3. <b>Later</b>\n    Sat, 14 Nov · Manual · <code>M3</code>',
     );
     expect(deliveryBody(0).text).toContain(
-      '<b>Next year</b>\nSat, 2 Jan 2027 · Manual · <code>M4</code>',
+      '4. <b>Next year</b>\n    Sat, 2 Jan 2027 · Manual · <code>M4</code>',
     );
-    expect(deliveryBody(0).text).toContain('Manual events: <code>/edit</code>.');
+    expect(deliveryBody(0).text).toContain('Manual: <code>/edit</code>');
     expect(deliveryBody(0).text).not.toContain('Google selections');
   });
 
@@ -1127,14 +1218,14 @@ describe('Telegram commands', () => {
 
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
-    expect(deliveryBody(0).text).toContain('Google selections: control panel.');
+    expect(deliveryBody(0).text).toContain('Google: control panel');
     expect(deliveryBody(0).text).not.toContain('/edit');
     expect(deliveryBody(0).text).not.toContain('/delete');
     expect(deliveryBody(0).text).toContain(
-      '<b>Google first</b>\nMon, 2 Nov · Google · <code>G1</code>',
+      '1. <b>Google first</b>\n    Mon, 2 Nov · Google · <code>G1</code>',
     );
     expect(deliveryBody(0).text).toContain(
-      '<b>Google second</b>\nMon, 2 Nov · Google · <code>G2</code>',
+      '2. <b>Google second</b>\n    Mon, 2 Nov · Google · <code>G2</code>',
     );
 
     fetchMock.mockClear();
@@ -1158,7 +1249,7 @@ describe('Telegram commands', () => {
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
     expect(deliveryBody(0).text).toContain(
-      '<b>Google present</b>\nMon, 2 Nov · Google · <code>G2</code>',
+      '1. <b>Google present</b>\n    Mon, 2 Nov · Google · <code>G2</code>',
     );
 
     await processTelegramUpdate(telegramUpdate('/focus G2'), 'https://example.com');
@@ -1201,13 +1292,13 @@ describe('Telegram commands', () => {
     await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
 
     expect(deliveryBody(0).text).toContain(
-      '<b>Today manual</b>\nToday · Manual · <code>M1</code>',
+      '<b>Today manual</b>\n    Today · Manual · <code>M1</code>',
     );
     expect(deliveryBody(0).text).toContain(
-      '<b>Recurring manual</b>\nFri, 6 Nov · Manual · Repeats weekly · <code>M2</code>',
+      '3. <b>Recurring manual</b>\n    Fri, 6 Nov · Manual · Repeats weekly · <code>M2</code>',
     );
     expect(deliveryBody(0).text).toContain(
-      '<b>Google today-google</b>\nToday · Google · <code>G1</code>',
+      '1. <b>Google today-google</b>\n    Today · Google · <code>G1</code>',
     );
     expect(deliveryBody(0).text).not.toContain('Past manual');
     expect(deliveryBody(0).text).not.toContain('Google past-google');

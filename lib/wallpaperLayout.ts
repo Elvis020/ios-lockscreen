@@ -55,6 +55,7 @@ export const CALENDAR_DOT_GEOMETRY = {
 // Calibration targets, not device detection. Keep both profiles above notifications.
 export const FIRST_DOT_TOP = { standard: 832, 'large-clock': 1032 } as const;
 export const DOT_EVENTS_GAP = 80;
+export const EXTENDED_EVENTS_BOTTOM = 2400;
 export const MAX_DOT_EVENTS_GAP = 240;
 
 export function getContinuousDotGridLayout(model: WallpaperModel) {
@@ -81,9 +82,6 @@ export interface WallpaperEventLayout {
   slotHeight: number;
   sectionGap: number;
   lift: number;
-  columns: number;
-  columnGap: number;
-  cellWidth: number;
   railLeft: number;
   railWidth: number;
   rows: number;
@@ -129,10 +127,18 @@ export function getWallpaperEventLayout(model: WallpaperModel): WallpaperEventLa
 
   const snug = createEventLayout(model, 'snug');
 
-  return snug.contentHeight <= availableHeight ? snug : createEventLayout(model, 'dense');
+  if (snug.contentHeight <= availableHeight) {
+    return snug;
+  }
+
+  const roomy = createEventLayout(model, 'dense');
+
+  return roomy.contentHeight <= availableHeight
+    ? roomy
+    : createEventLayout(model, 'compact');
 }
 
-type EventDensity = 'normal' | 'snug' | 'dense';
+type EventDensity = 'normal' | 'snug' | 'dense' | 'compact' | 'tight';
 
 function createEventLayout(
   model: WallpaperModel,
@@ -145,15 +151,15 @@ function createEventLayout(
   const visibleCount = Math.max(0, Math.min(limit, model.events.length) - startIndex);
   const overflow = Math.max(0, model.events.length - limit);
   const snug = compact && density === 'snug';
-  const dense = compact && density === 'dense';
-  const columns = dense ? 2 : 1;
+  const dense =
+    compact && (density === 'dense' || density === 'compact' || density === 'tight');
   const rowHeight = dense ? 52 : snug ? 68 : compact ? 76 : 144;
-  const rowGap = dense ? 5 : snug ? 14 : compact ? 20 : 40;
+  const rowGap =
+    density === 'dense' ? 36 : density === 'tight' ? 5 : snug ? 14 : compact ? 20 : 40;
   const overflowHeight = dense ? 26 : compact ? 32 : 40;
-  const rows = Math.ceil(visibleCount / columns);
+  const rows = visibleCount;
   const contentHeight =
     rows * rowHeight + Math.max(0, rows - 1) * rowGap + (overflow ? overflowHeight : 0);
-  const columnGap = 28;
   const railWidth = WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT;
 
   return {
@@ -165,15 +171,12 @@ function createEventLayout(
     slotHeight: Math.max(isGroupedCalendarLayout(model) ? 76 : 204, contentHeight),
     sectionGap: largeClock && model.presentation === 'calendar' ? 16 : 24,
     lift: model.presentation === 'calendar' ? (largeClock ? 48 : 32) : 0,
-    columns,
-    columnGap,
-    cellWidth: (railWidth - (columns - 1) * columnGap) / columns,
     railLeft: 0,
     railWidth,
     rows,
-    nameSize: dense ? 24 : compact ? 34 : 40,
-    countdownSize: dense ? 22 : compact ? 30 : 32,
-    countdownWidth: columns === 2 ? 120 : 160,
+    nameSize: compact ? 34 : 40,
+    countdownSize: compact ? 30 : 32,
+    countdownWidth: 160,
     timerGap: dense ? 6 : compact ? 12 : 18,
     startIndex,
     visibleCount,
@@ -191,11 +194,15 @@ function constrainEventRail(
     ...events,
     railLeft,
     railWidth,
-    cellWidth: (railWidth - (events.columns - 1) * events.columnGap) / events.columns,
   };
 }
 
-function fitDotGrid(model: WallpaperModel, events: WallpaperEventLayout) {
+function fitDotGrid(
+  model: WallpaperModel,
+  events: WallpaperEventLayout,
+  dense: boolean,
+  eventGap: number,
+) {
   const geometry =
     CALENDAR_DOT_GEOMETRY[model.timeRange === 'rolling14' ? 'week' : model.timeRange];
   const { columns, eventRingGap, eventRingWidth } = geometry;
@@ -213,7 +220,7 @@ function fitDotGrid(model: WallpaperModel, events: WallpaperEventLayout) {
   const availableHeight =
     LOCK_SCREEN_CONTENT_BANDS[model.lockScreenProfile].bottom -
     top -
-    DOT_EVENTS_GAP -
+    eventGap -
     events.slotHeight;
   const widthLimit =
     (contentWidth - ringOutset * 2 - (columns - 1) * geometry.gapX[0]) / columns;
@@ -221,13 +228,14 @@ function fitDotGrid(model: WallpaperModel, events: WallpaperEventLayout) {
     (availableHeight - ringOutset * 2 - (rows - 1) * geometry.gapY[0]) / rows;
   const size = Math.floor(Math.min(geometry.size, widthLimit, heightLimit) / 2) * 2;
 
-  if (size < geometry.minSize) {
+  if (size < (dense ? 18 : geometry.minSize)) {
     return null;
   }
 
-  // Bounded gaps use available space without stretching sparse views to fill it.
+  // Preserve the usual rail width when a taller list requires smaller dots.
+  const lostDotWidth = columns * Math.max(0, geometry.minSize - size);
   const gapX = Math.min(
-    geometry.gapX[1],
+    geometry.gapX[1] + Math.ceil(lostDotWidth / (columns - 1)),
     Math.floor((contentWidth - ringOutset * 2 - columns * size) / (columns - 1)),
   );
   const gapY =
@@ -263,11 +271,18 @@ function fitDotGrid(model: WallpaperModel, events: WallpaperEventLayout) {
 
 function solveDotComposition(model: WallpaperModel) {
   // Candidates are independent of the grid: never recurse between grid and rail sizing.
-  const densities: EventDensity[] = ['normal', 'snug', 'dense'];
+  const densities: EventDensity[] = ['normal', 'snug', 'dense', 'compact', 'tight'];
+  const baseline = {
+    ...model,
+    eventCount: Math.min(model.eventCount, 4),
+    events: model.events.slice(0, 4),
+  };
 
   for (const density of densities) {
-    const events = createEventLayout(model, density);
-    const grid = fitDotGrid(model, events);
+    const reservedEvents = createEventLayout(baseline, density);
+    const dense = density === 'dense' || density === 'compact' || density === 'tight';
+    const eventGap = dense ? 56 : DOT_EVENTS_GAP;
+    const grid = fitDotGrid(model, reservedEvents, dense, eventGap);
 
     if (!grid) {
       continue;
@@ -275,7 +290,7 @@ function solveDotComposition(model: WallpaperModel) {
 
     const ringOutset = grid.eventRingGap + grid.eventRingWidth;
     const constrainedEvents = constrainEventRail(
-      events,
+      createEventLayout(model, density),
       grid.positions[0].x - ringOutset,
       grid.width,
     );
@@ -285,11 +300,30 @@ function solveDotComposition(model: WallpaperModel) {
     const eventsTop = Math.max(
       Math.min(
         preferredEventsTop,
-        grid.top + grid.height + MAX_DOT_EVENTS_GAP,
-        bottom - constrainedEvents.slotHeight,
+        grid.top + grid.height + (dense ? eventGap : MAX_DOT_EVENTS_GAP),
+        bottom - reservedEvents.slotHeight,
       ),
-      grid.top + grid.height + DOT_EVENTS_GAP,
+      grid.top + grid.height + eventGap,
     );
+    // Grow downward from the four-event anchor, tightening only event gaps
+    // when the longest lists approach the lock-screen controls.
+    const availableHeight = EXTENDED_EVENTS_BOTTOM - eventsTop;
+    const gapCount = Math.max(0, constrainedEvents.rows - 1);
+    const rowsHeight = constrainedEvents.rows * constrainedEvents.rowHeight;
+    const overflowHeight = constrainedEvents.overflow
+      ? constrainedEvents.overflowHeight
+      : 0;
+
+    if (gapCount && constrainedEvents.contentHeight > availableHeight) {
+      constrainedEvents.rowGap = Math.max(
+        0,
+        Math.floor((availableHeight - rowsHeight - overflowHeight) / gapCount),
+      );
+      constrainedEvents.contentHeight =
+        rowsHeight + gapCount * constrainedEvents.rowGap + overflowHeight;
+      constrainedEvents.slotHeight = constrainedEvents.contentHeight;
+    }
+
     const headerHeight = 64;
     const headerGap = 20;
     const top = grid.top - headerHeight - headerGap;
@@ -299,8 +333,8 @@ function solveDotComposition(model: WallpaperModel) {
       headerHeight,
       headerGap,
       calendarTop: grid.top,
-      calendarHeight: eventsTop - DOT_EVENTS_GAP - grid.top,
-      eventGap: DOT_EVENTS_GAP,
+      calendarHeight: eventsTop - eventGap - grid.top,
+      eventGap,
       eventsTop,
       eventsHeight: constrainedEvents.slotHeight,
     };
@@ -345,6 +379,8 @@ export function getWallpaperLayoutBounds(model: WallpaperModel): WallpaperLayout
   if (composition) {
     return {
       ...bounds,
+      contentBottom: EXTENDED_EVENTS_BOTTOM,
+      presentationBottom: EXTENDED_EVENTS_BOTTOM,
       calendarTop: composition.calendarTop,
       calendarBottom: composition.calendarTop + composition.calendarHeight,
       eventsTop: composition.eventsTop,

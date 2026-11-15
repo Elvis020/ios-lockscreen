@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UserData } from '../lib/userSchema';
 import { InMemoryRedis } from './helpers/inMemoryRedis';
@@ -7,6 +8,8 @@ let redis: InMemoryRedis;
 
 describe('Telegram control panel', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-31T12:00:00Z'));
     vi.resetModules();
     redis = new InMemoryRedis();
     process.env.TELEGRAM_BOT_TOKEN = '123456:test-token';
@@ -19,6 +22,7 @@ describe('Telegram control panel', () => {
 
   afterEach(() => {
     process.env = { ...originalEnvironment };
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -70,19 +74,26 @@ describe('Telegram control panel', () => {
       appRequest({
         action: 'add-event',
         initData,
-        payload: { name: '  Dentist  ', date: '2026-11-10' },
+        payload: { name: '  Dentist  ', date: '2026-11-10', recurrence: 'monthly' },
       }),
     );
     const state = (await added.json()) as {
-      manualEvents: Array<{ name: string; date: string }>;
+      manualEvents: Array<{ name: string; date: string; recurrence: string }>;
       setup: { hasEvents: boolean };
     };
 
     expect(added.status).toBe(200);
     expect(state.manualEvents).toEqual([
-      expect.objectContaining({ name: 'Dentist', date: '2026-11-10' }),
+      expect.objectContaining({
+        name: 'Dentist',
+        date: '2026-11-10',
+        recurrence: 'monthly',
+      }),
     ]);
     expect(state.setup.hasEvents).toBe(true);
+    expect((await redis.get<UserData>('user:owner'))?.events[0].recurrence).toBe(
+      'monthly',
+    );
   });
 
   it('shows actionable guidance when the Google Calendar API is disabled', async () => {
@@ -99,6 +110,7 @@ describe('Telegram control panel', () => {
 
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({
+      code: 'api_disabled',
       error:
         "Google Calendar API is disabled. Enable it in this app's Google Cloud project, then try again.",
     });
@@ -267,10 +279,156 @@ describe('Telegram control panel', () => {
     expect(html).toContain('telegram.openLink(result.handoffUrl)');
   });
 
+  it('opens the existing Google handoff after an expired-token sync and allows retry on failure', async () => {
+    const { default: handler } = await import('../api/telegram/app');
+    const html = await (
+      await handler(new Request('https://example.com/api/telegram/app'))
+    ).text();
+    const handlers: Record<string, () => Promise<void>> = {};
+    const button = { disabled: false, addEventListener: vi.fn() };
+    const byId = (id: string) =>
+      id === 'googleConnect'
+        ? button
+        : {
+            addEventListener: (_: string, callback: () => Promise<void>) => {
+              handlers[id] = callback;
+            },
+          };
+    const reconnectError = Object.assign(new Error('Sign in again'), {
+      code: 'reconnect',
+    });
+    const request = vi.fn().mockRejectedValueOnce(reconnectError).mockResolvedValueOnce({
+      handoffUrl: 'https://example.com/api/google/handoff#opaque',
+    });
+    const openLink = vi.fn();
+    const source = html.slice(
+      html.indexOf("byId('googleSync').addEventListener"),
+      html.indexOf("byId('saveGoogle').addEventListener"),
+    );
+    const setStatus = vi.fn();
+
+    runInNewContext(source, { byId, request, setStatus, telegram: { openLink } });
+    await handlers.googleSync();
+
+    expect(request.mock.calls.map(([action]) => action)).toEqual([
+      'sync-google',
+      'start-google',
+    ]);
+    expect(openLink).toHaveBeenCalledWith(
+      'https://example.com/api/google/handoff#opaque',
+    );
+    expect(button.disabled).toBe(false);
+
+    request
+      .mockRejectedValueOnce(reconnectError)
+      .mockRejectedValueOnce(new Error('Try again'));
+    await handlers.googleSync();
+
+    expect(button.disabled).toBe(false);
+    expect(openLink).toHaveBeenCalledOnce();
+  });
+
+  it('classifies expired Google access for the sign-in recovery flow', async () => {
+    await redis.set('user:owner', userRecord());
+    await redis.set('telegram:user:42', 'owner');
+    const { GoogleSyncError } = await import('../lib/calendar/googleErrors');
+    const service = await import('../lib/calendar/service');
+
+    vi.spyOn(service, 'syncGoogleEvents').mockRejectedValue(
+      new GoogleSyncError('reconnect'),
+    );
+    const { default: handler } = await import('../api/telegram/app');
+    const response = await handler(
+      appRequest({
+        action: 'sync-google',
+        initData: await signedInitData(42),
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ code: 'reconnect' });
+  });
+
+  it('lets seven manual events coexist with newly checked Google events in the selector', async () => {
+    const { default: handler } = await import('../api/telegram/app');
+    const html = await (
+      await handler(new Request('https://example.com/api/telegram/app'))
+    ).text();
+    const createElement = () => ({
+      children: [] as any[],
+      checked: false,
+      disabled: false,
+      value: '',
+      textContent: '',
+      classList: { toggle: vi.fn(), remove: vi.fn() },
+      listeners: {} as Record<string, () => void>,
+      append(...children: any[]) {
+        this.children.push(...children);
+      },
+      appendChild(child: any) {
+        this.children.push(child);
+      },
+      replaceChildren() {
+        this.children = [];
+      },
+      addEventListener(name: string, callback: () => void) {
+        this.listeners[name] = callback;
+      },
+      querySelectorAll() {
+        return this.children
+          .map((row) => row.children[0])
+          .filter((input) => input.checked);
+      },
+    });
+    const elements = new Map<string, ReturnType<typeof createElement>>();
+    const byId = (id: string) => {
+      if (!elements.has(id)) elements.set(id, createElement());
+
+      return elements.get(id)!;
+    };
+    const google = {
+      connected: true,
+      manualCount: 7,
+      events: ['one', 'two', 'three'].map((id) => ({
+        id,
+        name: id,
+        date: '2026-12-01',
+        selected: false,
+        calendarName: 'Work',
+      })),
+    };
+    const source = html.slice(
+      html.indexOf('function renderGoogle('),
+      html.indexOf('async function mutate('),
+    );
+    const context = {
+      byId,
+      document: { createElement },
+      google,
+      googleSelection: null,
+      googleSaving: false,
+    };
+
+    runInNewContext(source + '; renderGoogle(google);', context);
+
+    for (let index = 0; index < 3; index += 1) {
+      const input = byId('googleEvents').children[index].children[0];
+
+      expect(input.disabled).toBe(false);
+      input.checked = true;
+      input.listeners.change();
+    }
+
+    expect(Array.from(context.googleSelection!)).toEqual(['one', 'two', 'three']);
+    expect(byId('saveGoogle').textContent).toBe('Save 3 selected events');
+    expect(byId('saveGoogle').disabled).toBe(false);
+    expect(byId('googleSelectionCopy').textContent).toBe('3 Google selected · 7 manual');
+  });
+
   it('allows Google selections beyond seven combined events, deduplicates submissions, and renders local save controls', async () => {
     const user = userRecord();
 
-    user.events = Array.from({ length: 6 }, (_, index) => ({
+    user.events = Array.from({ length: 7 }, (_, index) => ({
       id: `manual-${index}`,
       name: `Manual ${index}`,
       date: '2026-11-10',
@@ -304,7 +462,7 @@ describe('Telegram control panel', () => {
       google: { manualCount: number; events: unknown[] };
     };
 
-    expect(state.google).toMatchObject({ manualCount: 6 });
+    expect(state.google).toMatchObject({ manualCount: 7 });
     expect(state.google.events).toHaveLength(2);
 
     const overCapacity = await handler(

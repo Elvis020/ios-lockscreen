@@ -328,7 +328,7 @@ export async function saveTelegramDraftEvent(
         source: 'manual',
         createdAt: new Date().toISOString(),
         category: 'general',
-        recurrence: 'none',
+        recurrence: active.recurrence ?? 'none',
       });
 
       const wallpaperKey = user.wallpaperKey ?? generateUUID();

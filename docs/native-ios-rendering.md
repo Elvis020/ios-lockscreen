@@ -33,14 +33,13 @@ The first fill-dot starts at y=832 for Standard or y=1032 for Large clock on the
 with more clearance below the clock. These are calibration targets, not device
 detection; widgets, iOS zoom/cropping and clock customization need phone testing.
 Event rows have independent preferred anchors at y=1720/1812, moving as needed to
-keep at least 80px clear after the last dot's outer ring and finish by y=2080.
+keep 56px clear in dense views or at least 80px otherwise after the last dot's outer ring and finish by y=2080.
 The gap is capped at 240px so Week and Rolling 14 do not leave an oversized empty
 area before their events.
 Event timer lines remain 3px thin. Compact lists
 default to five events plus `+N more`. Set 1–8 using `/eventcount` or **Events shown**
-on the dashboard; this preference survives view changes. Rows stay full width
-while space allows, tightening their vertical gaps before using two columns for
-the densest combinations. Dot diameter and axis gaps adapt within bounded ranges,
+on the dashboard; this preference survives view changes. Events always stack in a single full-width column. Taller lists use tighter rows and
+can reduce the dot diameter to fit above the notification area. Dot diameter and axis gaps adapt within bounded ranges,
 without stretching circles or dropping days/events. Countdown counts its
 featured event as the first, with additional events beneath it. Event dates and
 the redundant quarter heading stay hidden.
@@ -48,9 +47,9 @@ the redundant quarter heading stay hidden.
 The shared layout solver fits the dot field and actual event rail together. In dot
 views, the rail is centered beneath and constrained to the grid's outer-ring envelope;
 other presentations retain the content-width rail. It tries normal rows, then snug
-rows, then two-column dense rows, keeping
+rows, then dense single-column rows, keeping
 the largest even dot diameter that fits each candidate's height and the available
-width. Week/rolling dots stay within 112–124px, Month 96–108px, Quarter 56–72px and
+width. With space available, Week/rolling dots stay within 112–124px, Month 96–108px, Quarter 56–72px and
 Year 30–32px. Axis gaps are bounded rather than spread-to-fill: a sparse Week stays
 compact, while dense views use more of the available height. Year has seventeen
 rows, including leap years, with a maximum 16px horizontal fill gap instead of the
@@ -166,3 +165,8 @@ preview is also only a visual aid, not an iPhone execution result.
 - [Scriptable: Shortcut input](https://docs.scriptable.app/args/#shortcutparameter)
 - [Scriptable: Shortcut output types](https://docs.scriptable.app/script/#setshortcutoutput)
 - [Scriptable: PNG/base64 data](https://docs.scriptable.app/data/)
+
+For dot views, the grid and event-list anchor use a maximum four-event reference.
+Additional displayed events extend downward to y=2400, tightening event gaps when
+needed. The dot size and spacing stay fixed for counts four through eight.
+Expanded iOS notification cards can cover the extended lower rows.

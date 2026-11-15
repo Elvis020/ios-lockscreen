@@ -18,6 +18,7 @@ import {
 } from '../../lib/preferences';
 import { getRedis } from '../../lib/redis';
 import { verifyTelegramInitData } from '../../lib/telegramMiniAppAuth';
+import { EVENT_RECURRENCES, type EventRecurrence } from '../../lib/userSchema';
 import {
   addManualEvent,
   deleteManualEvent,
@@ -131,12 +132,25 @@ export default async function handler(req: Request): Promise<Response> {
     if (body.action === 'add-event') {
       const name = normalizeEventName(body.payload?.name);
       const date = body.payload?.date;
+      const recurrence = body.payload?.recurrence ?? 'none';
 
-      if (!name || typeof date !== 'string' || !isValidDateString(date)) {
-        return jsonResponse({ error: 'Enter an event name and valid date' }, 400);
+      if (
+        !name ||
+        typeof date !== 'string' ||
+        !isValidDateString(date) ||
+        !EVENT_RECURRENCES.includes(recurrence as EventRecurrence)
+      ) {
+        return jsonResponse(
+          { error: 'Enter an event name, valid date, and repeat option' },
+          400,
+        );
       }
 
-      await addManualEvent(account.token, { name, date });
+      await addManualEvent(account.token, {
+        name,
+        date,
+        recurrence: recurrence as EventRecurrence,
+      });
 
       return refreshedState(account.token);
     }
@@ -252,7 +266,10 @@ export default async function handler(req: Request): Promise<Response> {
     }
 
     if (error instanceof GoogleSyncError) {
-      return jsonResponse({ error: googleSyncErrorMessage(error) }, 502);
+      return jsonResponse(
+        { error: googleSyncErrorMessage(error), code: error.kind },
+        502,
+      );
     }
 
     if (
@@ -397,7 +414,12 @@ function appState(user: UserData) {
       manualCount,
       trackedCount: user.selectedEventIds.length,
     },
-    manualEvents: user.events.map(({ id, name, date }) => ({ id, name, date })),
+    manualEvents: user.events.map(({ id, name, date, recurrence }) => ({
+      id,
+      name,
+      date,
+      recurrence,
+    })),
     setup: {
       hasEvents: user.events.length + user.selectedEventIds.length > 0,
       shortcutConfigured: Boolean(shortcutUrl),
@@ -689,6 +711,7 @@ function appPage(nonce: string): string {
                 <label>Event name<input id="eventName" maxlength="50" autocomplete="off" placeholder="Trip to Cape Town" required></label>
                 <label>Date<input id="eventDate" type="date" required></label>
               </div>
+              <label>Repeat<select id="eventRecurrence"><option value="none">Does not repeat</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option></select></label>
               <button class="button primary" type="submit">Add event</button>
             </form>
             <div id="manualEvents" class="event-list"></div>
@@ -766,7 +789,11 @@ function appPage(nonce: string): string {
         });
         const data = await response.json().catch(() => ({ error: 'Unexpected response' }));
 
-        if (!response.ok) throw new Error(data.error || 'Request failed');
+        if (!response.ok) {
+          const error = new Error(data.error || 'Request failed');
+          error.code = data.code;
+          throw error;
+        }
 
         return data;
       }
@@ -877,7 +904,7 @@ function appPage(nonce: string): string {
           const remove = document.createElement('button');
 
           name.textContent = event.name;
-          date.textContent = event.date;
+          date.textContent = event.date + (event.recurrence && event.recurrence !== 'none' ? ' · Repeats ' + event.recurrence : '');
           remove.className = 'button danger';
           remove.type = 'button';
           remove.textContent = 'Remove';
@@ -889,7 +916,8 @@ function appPage(nonce: string): string {
       }
 
       function renderGoogle(google) {
-        byId('googleConnect').classList.toggle('hidden', google.connected);
+        byId('googleConnect').classList.remove('hidden');
+        byId('googleConnect').textContent = google.connected ? 'Reconnect Google' : 'Connect Google Calendar';
         byId('googleSync').classList.toggle('hidden', !google.connected);
         byId('googleSummary').textContent = google.connected ? (google.events.length ? google.events.length + ' upcoming events found. Choose what belongs on the wallpaper.' : 'Connected. Sync to look for upcoming events across your visible calendars.') : 'Connect Google Calendar after your first preview, or keep adding events manually.';
         const list = byId('googleEvents');
@@ -962,7 +990,11 @@ function appPage(nonce: string): string {
 
       byId('eventForm').addEventListener('submit', async (event) => {
         event.preventDefault();
-        const added = await mutate('add-event', { name: byId('eventName').value, date: byId('eventDate').value }, 'Event added. Your preview is updated.');
+        const added = await mutate('add-event', {
+          name: byId('eventName').value,
+          date: byId('eventDate').value,
+          recurrence: byId('eventRecurrence').value,
+        }, 'Event added. Your preview is updated.');
 
         if (added) byId('eventForm').reset();
       });
@@ -976,11 +1008,21 @@ function appPage(nonce: string): string {
           byId('googlePanel').open = true;
           setStatus(syncMessage(next.sync));
         } catch (error) {
-          setStatus(error instanceof Error ? error.message : 'Google Calendar could not sync', true);
+          if (error.code === 'reconnect') {
+            await startGoogleSignIn();
+          } else {
+            setStatus(error instanceof Error ? error.message : 'Google Calendar could not sync', true);
+          }
         }
       });
 
-      byId('googleConnect').addEventListener('click', async () => {
+      let googleConnecting = false;
+
+      async function startGoogleSignIn() {
+        if (googleConnecting) return;
+
+        googleConnecting = true;
+        byId('googleConnect').disabled = true;
         try {
           setStatus('Opening Google…');
           const result = await request('start-google');
@@ -988,8 +1030,13 @@ function appPage(nonce: string): string {
           else window.location.assign(result.handoffUrl);
         } catch (error) {
           setStatus(error instanceof Error ? error.message : 'Could not open Google', true);
+        } finally {
+          googleConnecting = false;
+          byId('googleConnect').disabled = false;
         }
-      });
+      }
+
+      byId('googleConnect').addEventListener('click', startGoogleSignIn);
 
       byId('saveGoogle').addEventListener('click', async () => {
         if (!state || googleSaving) return;
@@ -1064,6 +1111,12 @@ function appPage(nonce: string): string {
       request('bootstrap')
         .then(async (initial) => {
           render(initial);
+
+          if (new URLSearchParams(window.location.search).get('google') === 'reconnect') {
+            byId('googlePanel').open = true;
+            await startGoogleSignIn();
+          }
+
           await loadPreview();
 
           if (new URLSearchParams(window.location.search).get('google') === 'connected') {

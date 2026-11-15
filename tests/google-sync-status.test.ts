@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UserData } from '../lib/userSchema';
 import { InMemoryRedis } from './helpers/inMemoryRedis';
 
@@ -14,6 +14,8 @@ let batch: {
 
 describe('Google sync status', () => {
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-26T12:00:00Z'));
     vi.resetModules();
     redis = new InMemoryRedis();
     failure = undefined;
@@ -40,6 +42,10 @@ describe('Google sync status', () => {
         }
       },
     }));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('distinguishes an unconnected account from an empty calendar', async () => {

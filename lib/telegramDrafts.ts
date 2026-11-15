@@ -6,6 +6,7 @@ import {
   type RedisFencedSet,
 } from './redisLock';
 import { isValidDateString, normalizeEventName } from './validation';
+import type { EventRecurrence } from './userSchema';
 
 export interface TelegramEventDraft {
   id: string;
@@ -15,6 +16,7 @@ export interface TelegramEventDraft {
   chatId: string;
   name: string;
   date?: string;
+  recurrence?: EventRecurrence;
   operation?: 'create' | 'edit';
   step?: 'name' | 'date' | 'review';
   original?: TelegramEventOriginal;
@@ -281,15 +283,26 @@ export async function updateTelegramDraftName(
   name: string,
   revision: string,
   completion?: DraftCompletion,
+  expectedStep: 'name' | 'review' = 'name',
 ): Promise<TelegramEventDraft | null> {
   return updateTelegramDraft(
     userId,
     id,
     revision,
     { name, step: 'review' },
-    'name',
+    expectedStep,
     completion,
   );
+}
+
+export async function updateTelegramDraftRecurrence(
+  userId: string,
+  id: string,
+  revision: string,
+  recurrence: EventRecurrence,
+  completion?: DraftCompletion,
+): Promise<TelegramEventDraft | null> {
+  return updateTelegramDraft(userId, id, revision, { recurrence }, 'review', completion);
 }
 
 export async function updateTelegramDraftStep(
@@ -313,7 +326,7 @@ async function updateTelegramDraft(
   userId: string,
   id: string,
   revision: string,
-  changes: Partial<Pick<TelegramEventDraft, 'name' | 'date' | 'step'>>,
+  changes: Partial<Pick<TelegramEventDraft, 'name' | 'date' | 'step' | 'recurrence'>>,
   expectedStep: TelegramEventDraft['step'],
   completion?: DraftCompletion,
 ): Promise<TelegramEventDraft | null> {

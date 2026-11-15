@@ -63,6 +63,18 @@ describe('native wallpaper scene', () => {
             for (const event of visible) {
               expect(text.map(({ value }) => value)).toContain(event.name);
             }
+            const names = visible
+              .slice(getWallpaperEventLayout(model).startIndex)
+              .map((event) => text.find((command) => command.value === event.name)!);
+
+            for (const [index, name] of names.entries()) {
+              expect(name.x).toBe(names[0].x);
+              if (index > 0) {
+                expect(name.y).toBeGreaterThanOrEqual(
+                  names[index - 1].y + names[index - 1].height,
+                );
+              }
+            }
             expect(visible).toHaveLength(eventCount);
             expect(text.map(({ value }) => value)).toContain(`+${10 - eventCount} more`);
             for (const event of model.events.slice(eventCount)) {
@@ -257,15 +269,15 @@ describe('native wallpaper scene', () => {
 
       expect(eventName).toMatchObject({
         x: CONTENT_LEFT + layout.railLeft,
-        width: layout.cellWidth - layout.countdownWidth - 28,
+        width: layout.railWidth - layout.countdownWidth - 28,
       });
       expect(countdown).toMatchObject({
-        x: CONTENT_LEFT + layout.railLeft + layout.cellWidth - layout.countdownWidth,
+        x: CONTENT_LEFT + layout.railLeft + layout.railWidth - layout.countdownWidth,
         width: layout.countdownWidth,
       });
       expect(timer).toMatchObject({
         x: CONTENT_LEFT + layout.railLeft,
-        width: layout.cellWidth,
+        width: layout.railWidth,
       });
     },
   );

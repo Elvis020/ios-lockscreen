@@ -133,9 +133,13 @@ describe('wallpaper renderer', () => {
                 84;
 
           expect(bounds.contentTop).toBe(expectedTop);
-          expect(bounds.contentBottom).toBeLessThanOrEqual(profileBand.bottom);
+          expect(bounds.contentBottom).toBeLessThanOrEqual(
+            bounds.calendarTop !== undefined ? 2400 : profileBand.bottom,
+          );
           expect(bounds.presentationTop).toBeGreaterThanOrEqual(expectedTop);
-          expect(bounds.presentationBottom).toBeLessThanOrEqual(profileBand.bottom);
+          expect(bounds.presentationBottom).toBeLessThanOrEqual(
+            bounds.calendarTop !== undefined ? 2400 : profileBand.bottom,
+          );
 
           if (bounds.calendarTop !== undefined && bounds.calendarBottom !== undefined) {
             const availableHeight = bounds.calendarBottom - bounds.calendarTop;
@@ -145,7 +149,7 @@ describe('wallpaper renderer', () => {
 
           if (bounds.eventsTop !== undefined && bounds.eventsBottom !== undefined) {
             expect(bounds.eventsTop).toBeGreaterThanOrEqual(profileBand.top);
-            expect(bounds.eventsBottom).toBeLessThanOrEqual(profileBand.bottom);
+            expect(bounds.eventsBottom).toBeLessThanOrEqual(bounds.contentBottom);
             expect(bounds.calendarBottom).toBeLessThanOrEqual(bounds.eventsTop);
           }
 

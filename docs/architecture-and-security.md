@@ -123,12 +123,10 @@ large countdown display has no event timer line; additional Countdown events do.
 
 Every active presentation honors the same saved display count: 1–8 events, default
 5, for either clock profile. The layout reserves the actual rail height (at least
-76px for an empty state), rather than an unused fixed 204px slot. Lists use the
-dot-grid envelope in dot views and full-width rows otherwise when the available band
-allows, first tightening
-76px rows/20px gaps to 68px rows/14px gaps if needed. Dense combinations then use
-two columns with 52px rows, a 28px gutter and the same thin timers. This preserves
-bounded dot sizes and ring separation while fitting the selected count. Countdown keeps its first event
+76px for an empty state), rather than an unused fixed 204px slot. Events always stack in one column spanning the dot-grid envelope in dot
+views and the content width elsewhere. Compact views tighten 76px rows/20px gaps
+to 68px rows/14px gaps and then 52px rows/36px gaps (20px or 5px when the calendar otherwise cannot fit) as needed. Taller lists can
+use smaller dots while retaining every day and the thin event timers. Countdown keeps its first event
 as the hero and lists the remainder beneath it. `+N more` counts all remaining
 upcoming events. This is a display limit, not an account limit; every eligible
 event still contributes its calendar marker. Dates remain stored and all active
@@ -163,9 +161,9 @@ Calendar/Hybrid/Progress content is top-anchored below the clock; compact event 
 independent preferred positions (1720px standard, 1812px large-clock) and move down
 when a grid needs clearance or up to fit a taller event list. A single pure solver
 chooses an event density and fits the largest even dot diameter within range caps,
-bounded horizontal/vertical gaps, an 80px clear ring-to-rail gap, and the 2080px
+bounded horizontal/vertical gaps, a 56px dense or 80px standard minimum ring-to-rail gap, and the 2080px
 bottom. The ring-to-rail gap cannot exceed 240px: sparse views keep their events
-closer instead of ballooning dots or leaving an oversized blank area. Year dots are 30–32px
+closer instead of ballooning dots or leaving an oversized blank area. With space available, Year dots are 30–32px
 with 12–16px horizontal fill gaps, larger and tighter than the former 24px/30px.
 Geometry can adapt to profile and actual event count but not to dot-bearing
 presentation alone. No spread-to-fill rows or month-group geometry remain.

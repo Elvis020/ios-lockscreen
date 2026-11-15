@@ -470,7 +470,7 @@ function addEventRow(
   const countdownHeight = Math.ceil(countdownSize * 1.2);
   const gap = layout.timerGap;
   const countdownWidth = layout.countdownWidth;
-  const nameGap = layout.columns === 2 ? 16 : 28;
+  const nameGap = 28;
   const textTop = top + (layout.rowHeight - (nameHeight + gap + 3)) / 2;
 
   if (event.focused) {
@@ -557,14 +557,16 @@ function addEvents(
   }
 
   for (const [index, event] of visible.entries()) {
-    const rowTop =
-      top + Math.floor(index / layout.columns) * (layout.rowHeight + layout.rowGap);
-    const left =
-      CONTENT_LEFT +
-      layout.railLeft +
-      (index % layout.columns) * (layout.cellWidth + layout.columnGap);
+    const rowTop = top + index * (layout.rowHeight + layout.rowGap);
 
-    addEventRow(scene, model, event, rowTop, left, layout.cellWidth);
+    addEventRow(
+      scene,
+      model,
+      event,
+      rowTop,
+      CONTENT_LEFT + layout.railLeft,
+      layout.railWidth,
+    );
   }
 
   const overflow = layout.overflow;

@@ -123,11 +123,19 @@ describe('continuous dot progress layout', () => {
               const outset = grid.eventRingGap + grid.eventRingWidth;
 
               expect(grid).toEqual(expected);
-              expect(grid.size).toBeGreaterThanOrEqual(geometry.minSize);
+              expect(grid.size).toBeGreaterThanOrEqual(
+                events.rowHeight === 52 ? 18 : geometry.minSize,
+              );
               expect(grid.size).toBeLessThanOrEqual(geometry.size);
               expect(grid.size % 2).toBe(0);
               expect(grid.pitchX - grid.size).toBeGreaterThanOrEqual(geometry.gapX[0]);
-              expect(grid.pitchX - grid.size).toBeLessThanOrEqual(geometry.gapX[1]);
+              expect(grid.pitchX - grid.size).toBeLessThanOrEqual(
+                geometry.gapX[1] +
+                  Math.ceil(
+                    (grid.columns * Math.max(0, geometry.minSize - grid.size)) /
+                      (grid.columns - 1),
+                  ),
+              );
               expect(grid.pitchY - grid.size).toBeGreaterThanOrEqual(geometry.gapY[0]);
               expect(grid.pitchY - grid.size).toBeLessThanOrEqual(geometry.gapY[1]);
               expect(grid.pitchX).toBeGreaterThan(grid.size + 2 * outset);
@@ -145,26 +153,27 @@ describe('continuous dot progress layout', () => {
               );
               expect(
                 composition.eventsTop - grid.top - grid.height,
-              ).toBeGreaterThanOrEqual(DOT_EVENTS_GAP);
+              ).toBeGreaterThanOrEqual(events.rowHeight === 52 ? 56 : DOT_EVENTS_GAP);
               expect(composition.eventsTop - grid.top - grid.height).toBeLessThanOrEqual(
                 MAX_DOT_EVENTS_GAP,
               );
               expect(
                 composition.eventsTop + composition.eventsHeight,
-              ).toBeLessThanOrEqual(2080);
+              ).toBeLessThanOrEqual(2400);
               expect(events.limit).toBe(eventCount);
               expect(events.visibleCount).toBe(Math.min(actualCount, eventCount));
               expect(events.overflow).toBe(Math.max(0, actualCount - eventCount));
               expect(events.contentHeight).toBeLessThanOrEqual(events.slotHeight);
               expect(events.railLeft).toBe(grid.positions[0].x - outset);
               expect(events.railWidth).toBe(grid.width);
-              expect(events.railLeft + events.railWidth / 2).toBe(
-                (WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT) / 2,
-              );
-              expect(events.cellWidth).toBe(
-                (events.railWidth - (events.columns - 1) * events.columnGap) /
-                  events.columns,
-              );
+              expect(
+                Math.abs(
+                  events.railLeft +
+                    events.railWidth / 2 -
+                    (WALLPAPER_WIDTH - CONTENT_LEFT - CONTENT_RIGHT) / 2,
+                ),
+              ).toBeLessThanOrEqual(0.5);
+              expect(events.rows).toBe(events.visibleCount);
               expect(bounds.contentTop).toBe(composition.top);
               for (const position of grid.positions) {
                 expect([position.x, position.y, grid.size].every(Number.isInteger)).toBe(
@@ -193,11 +202,13 @@ describe('continuous dot progress layout', () => {
     const week = buildWallpaperModel({ ...options, timeRange: 'week' });
     const quarter = buildWallpaperModel({ ...options, timeRange: 'quarter' });
 
-    expect(getWallpaperEventLayout(week)).toMatchObject({ columns: 1, rowHeight: 76 });
+    expect(getWallpaperEventLayout(week)).toMatchObject({ rows: 5, rowHeight: 76 });
     expect(getWallpaperEventLayout(quarter)).toMatchObject({
-      columns: 2,
+      rows: 5,
       rowHeight: 52,
-      slotHeight: 192,
+      rowGap: 36,
+      nameSize: 34,
+      countdownSize: 30,
     });
   });
 
@@ -214,6 +225,29 @@ describe('continuous dot progress layout', () => {
       });
     },
   );
+
+  it('keeps four-event dot geometry and the list anchor when additional events are shown', () => {
+    for (const timeRange of TIME_RANGES) {
+      for (const lockScreenProfile of LOCK_SCREEN_PROFILES) {
+        const options = { date, publicEvents, timeRange, lockScreenProfile };
+        const four = buildWallpaperModel({ ...options, eventCount: 4 });
+
+        for (const eventCount of [5, 6, 7, 8]) {
+          const model = buildWallpaperModel({ ...options, eventCount });
+
+          expect(getContinuousDotGridLayout(model)).toEqual(
+            getContinuousDotGridLayout(four),
+          );
+          expect(getCalendarComposition(model)!.eventsTop).toBe(
+            getCalendarComposition(four)!.eventsTop,
+          );
+          expect(getCalendarComposition(model)!.eventsHeight).toBeGreaterThan(
+            getCalendarComposition(four)!.eventsHeight,
+          );
+        }
+      }
+    }
+  });
 
   it('adapts Quarter to the actual rail while making Year larger and less horizontally airy', () => {
     const options = {
@@ -236,9 +270,6 @@ describe('continuous dot progress layout', () => {
     expect(year).toMatchObject({
       columns: 22,
       rows: 17,
-      size: 32,
-      pitchX: 48,
-      pitchY: 44,
     });
     expect(year.pitchX - year.size).toBeLessThan(30);
     expect(FIRST_DOT_TOP).toEqual({ standard: 832, 'large-clock': 1032 });

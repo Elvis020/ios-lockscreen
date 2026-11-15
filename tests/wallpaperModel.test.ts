@@ -78,6 +78,41 @@ describe('buildWallpaperModel', () => {
     expect(model.events.map(({ name }) => name)).toEqual(['Selected']);
   });
 
+  it('rolls two weekly occurrences and one monthly occurrence across refreshes', () => {
+    const user = normalizeUserData(
+      {
+        token: 'token',
+        name: 'Ada',
+        timeZone: 'UTC',
+        events: [
+          { name: 'Weekly class', date: '2026-11-14', recurrence: 'weekly' },
+          { name: 'Monthly bill', date: '2026-11-10', recurrence: 'monthly' },
+        ],
+      },
+      'token',
+    );
+    const before = buildWallpaperModel({
+      user,
+      date: new Date('2026-11-15T12:00:00Z'),
+    });
+    const after = buildWallpaperModel({
+      user,
+      date: new Date('2026-11-22T12:00:00Z'),
+    });
+
+    expect(before.events.map(({ name, date }) => [name, date])).toEqual([
+      ['Weekly class', '2026-11-21'],
+      ['Weekly class', '2026-11-28'],
+      ['Monthly bill', '2026-12-10'],
+    ]);
+    expect(after.events.map(({ name, date }) => [name, date])).toEqual([
+      ['Weekly class', '2026-11-28'],
+      ['Weekly class', '2026-12-05'],
+      ['Monthly bill', '2026-12-10'],
+    ]);
+    expect(user?.events).toHaveLength(2);
+  });
+
   it('aligns calendar months and keeps today distinct from an event marker', () => {
     const model = buildWallpaperModel({
       date: new Date('2026-10-23T12:00:00Z'),
