@@ -496,18 +496,23 @@ export async function replaceManualEvents(
 export async function deleteManualEvent(
   token: string,
   eventId: string,
+  completion?: MutationCompletion,
 ): Promise<UserData | null> {
-  return mutateUser(token, (user) => {
-    const originalLength = user.events.length;
+  return mutateUser(
+    token,
+    (user) => {
+      const originalLength = user.events.length;
 
-    user.events = user.events.filter(({ id }) => id !== eventId);
+      user.events = user.events.filter(({ id }) => id !== eventId);
 
-    if (user.events.length === originalLength) {
-      throw new Error('Event not found');
-    }
+      if (user.events.length === originalLength) {
+        throw new Error('Event not found');
+      }
 
-    return pruneEventMetadata(user);
-  });
+      return pruneEventMetadata(user);
+    },
+    completion,
+  );
 }
 
 export async function deleteManualEventAtIndex(

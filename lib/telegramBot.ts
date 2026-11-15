@@ -21,7 +21,7 @@ import { deleteRedisKeyIfValue } from './redisLock';
 import {
   addCustomTheme,
   deleteCustomTheme,
-  deleteManualEventAtIndex,
+  deleteManualEvent,
   ensureWallpaperKey,
   getUser,
   linkTelegramIdentity,
@@ -62,8 +62,9 @@ import {
   buildEventTimeline,
   buildUpcomingEventTimeline,
   type CategorizedCalendarEvent,
+  type TimelineEvent,
 } from './eventTimeline';
-import type { UserData } from './userSchema';
+import type { ManualEvent, UserData } from './userSchema';
 import {
   createStudioDraft,
   finalizeStudioDraft,
@@ -1245,15 +1246,7 @@ async function runLinkedTelegramCommand(
     const manageButton = manageEventsButton(origin);
 
     const today = localDate(user.timeZone);
-    const events = buildUpcomingEventTimeline(
-      user.events,
-      user.cachedCalEvents.map((event): CategorizedCalendarEvent => ({
-        ...event,
-        category: user.googleCategoryOverrides?.[event.id] ?? 'general',
-      })),
-      user.selectedEventIds,
-      today,
-    );
+    const events = upcomingTimelineForUser(user, today);
 
     if (!events.length) {
       return {
@@ -1291,7 +1284,7 @@ async function runLinkedTelegramCommand(
 
     const guidance = [
       ...(events.some((event) => event.source === 'manual')
-        ? ['Manual: <code>/edit</code>']
+        ? ['Manual: <code>/edit ROW</code> · <code>/delete ROW</code>']
         : []),
       ...(events.some((event) => event.source === 'google')
         ? ['Google: control panel']
@@ -1727,25 +1720,22 @@ async function runLinkedTelegramCommand(
       };
     }
 
-    const requestedIndex = args.length === 1 ? Number(args[0]) - 1 : undefined;
+    const requestedEvent =
+      args.length === 1
+        ? resolveManualEventFromList(user, args[0], localDate(user.timeZone))
+        : undefined;
 
-    if (
-      args.length > 1 ||
-      (args.length === 1 &&
-        (!Number.isInteger(requestedIndex) ||
-          requestedIndex! < 0 ||
-          requestedIndex! >= user.events.length))
-    ) {
+    if (args.length > 1 || (args.length === 1 && !requestedEvent)) {
       return {
         reply: htmlReply(
-          '<b>Choose an event to edit</b>\nUse <code>/edit</code>, or <code>/edit NUMBER</code> from <code>/events</code>.',
+          '<b>Choose a manual event to edit</b>\nUse a row number from <code>/events</code>, or its M reference. Google events are managed in the control panel.',
         ),
         completionCommitted: false,
       };
     }
 
-    if (requestedIndex !== undefined) {
-      const event = user.events[requestedIndex];
+    if (requestedEvent) {
+      const event = requestedEvent;
       const draft = await createTelegramDraft(
         {
           token,
@@ -1806,9 +1796,13 @@ async function runLinkedTelegramCommand(
   }
 
   if (command === '/delete') {
-    const index = Number(args[0]) - 1;
+    const user = await getUser(token);
+    const event =
+      user && args.length === 1
+        ? resolveManualEventFromList(user, args[0], localDate(user.timeZone))
+        : undefined;
 
-    if (!Number.isInteger(index) || index < 0) {
+    if (!event) {
       return {
         reply: deleteUsageReply(),
         completionCommitted: false,
@@ -1816,7 +1810,7 @@ async function runLinkedTelegramCommand(
     }
 
     try {
-      await deleteManualEventAtIndex(token, index, completion);
+      await deleteManualEvent(token, event.id, completion);
     } catch (error) {
       if (error instanceof Error && error.message === 'Event not found') {
         return {
@@ -1829,7 +1823,13 @@ async function runLinkedTelegramCommand(
     }
 
     return {
-      reply: htmlReply(['✓ <b>Event deleted</b>', WALLPAPER_REFRESH_NOTE].join('\n')),
+      reply: htmlReply(
+        [
+          '✓ <b>Event deleted</b>',
+          `${escapeTelegramHtml(event.name)} · ${escapeTelegramHtml(formatTelegramEventDate(event.date))}`,
+          WALLPAPER_REFRESH_NOTE,
+        ].join('\n'),
+      ),
       completionCommitted: Boolean(completion),
     };
   }
@@ -2532,6 +2532,39 @@ function autoProfileText(profiles: import('./userSchema').AutomaticProfiles): st
   ].join('\n');
 }
 
+function upcomingTimelineForUser(user: UserData, today: string): TimelineEvent[] {
+  return buildUpcomingEventTimeline(
+    user.events,
+    user.cachedCalEvents.map((event): CategorizedCalendarEvent => ({
+      ...event,
+      category: user.googleCategoryOverrides?.[event.id] ?? 'general',
+    })),
+    user.selectedEventIds,
+    today,
+  );
+}
+
+function resolveManualEventFromList(
+  user: UserData,
+  reference: string,
+  today: string,
+): ManualEvent | undefined {
+  const match = /^(M)?([1-9]\d*)$/i.exec(reference);
+
+  if (!match) return undefined;
+
+  const position = Number(match[2]);
+
+  if (!Number.isSafeInteger(position)) return undefined;
+  if (match[1]) return user.events[position - 1];
+
+  const listed = upcomingTimelineForUser(user, today)[position - 1];
+
+  return listed?.source === 'manual'
+    ? user.events.find((event) => event.id === listed.id)
+    : undefined;
+}
+
 function formatUpcomingEventDate(date: string, today: string): string {
   if (date === today) return 'Today';
 
@@ -2586,8 +2619,8 @@ function usageReply(title: string, command: string): TelegramReply {
 function deleteUsageReply(): TelegramReply {
   return htmlReply(
     [
-      '<b>Choose an event to delete</b>',
-      'Open <code>/events</code>, then use <code>/delete NUMBER</code>.',
+      '<b>Choose a manual event to delete</b>',
+      'Open <code>/events</code>, then use its row number or M reference. Google events are managed in the control panel.',
     ].join('\n'),
   );
 }

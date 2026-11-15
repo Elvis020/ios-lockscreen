@@ -52,7 +52,7 @@ describe('Telegram commands', () => {
       web_app: { url: 'https://example.com/api/telegram/app?v=20261107' },
     });
     expect(deliveryBody(1).text).toContain('/edit NUMBER');
-    await processTelegramUpdate(telegramUpdate('/edit 10'), 'https://example.com');
+    await processTelegramUpdate(telegramUpdate('/edit M10'), 'https://example.com');
     expect(deliveryBody(2).text).toContain('Event 10');
 
     vi.setSystemTime(new Date('2026-10-31T12:00:00Z'));
@@ -81,6 +81,48 @@ describe('Telegram commands', () => {
     expect(combined).toContain('90. <b>Event 90 with a longer title</b>');
     expect(pages.slice(0, -1).every((page) => !page.reply_markup)).toBe(true);
     expect(pages.at(-1)?.reply_markup.inline_keyboard[0][0].text).toBe('Manage events');
+  });
+
+  it('edits and deletes the visible row when stored manual order differs', async () => {
+    vi.setSystemTime(new Date('2026-11-15T12:00:00Z'));
+    await seedLinkedUser({
+      events: [
+        { ...manualEvent('devcon', 'Devcon26'), date: '2026-12-19' },
+        { ...manualEvent('week', 'p-diddy week'), date: '2026-11-25' },
+        { ...manualEvent('arc', 'Arc’s last day'), date: '2026-12-21' },
+        { ...manualEvent('spaceyel', 'codex renewal'), date: '2026-12-01' },
+        { ...manualEvent('elvisa', 'elvisa renewal'), date: '2026-11-23' },
+        { ...manualEvent('dinner', 'turntabl dinner'), date: '2026-11-19' },
+        { ...manualEvent('meetup', 'devcongress meetup'), date: '2026-11-28' },
+        { ...manualEvent('fifa', 'black friday'), date: '2026-11-24' },
+        { ...manualEvent('fibre', 'fibre-bundle-topup'), date: '2026-11-20' },
+      ],
+      selectedEventIds: ['school'],
+      cachedCalEvents: [{ ...googleEvent('school'), date: '2026-11-15' }],
+    });
+    const { processTelegramUpdate } = await import('../lib/telegramBot');
+    const { getUser } = await import('../lib/tokenManager');
+    const { buildWallpaperModel } = await import('../lib/wallpaperModel');
+
+    await processTelegramUpdate(telegramUpdate('/events'), 'https://example.com');
+    expect(deliveryBody(0).text).toContain('3. <b>fibre-bundle-topup</b>');
+    expect(deliveryBody(0).text).toContain('<code>M9</code>');
+
+    await processTelegramUpdate(telegramUpdate('/edit 3'), 'https://example.com');
+    expect(deliveryBody(1).text).toContain('Event: <b>fibre-bundle-topup</b>');
+
+    await processTelegramUpdate(telegramUpdate('/delete 3'), 'https://example.com');
+    expect(deliveryBody(2).text).toContain('Event deleted</b>\nfibre-bundle-topup');
+
+    const user = (await getUser('owner'))!;
+    const wallpaper = buildWallpaperModel({
+      user,
+      date: new Date('2026-11-15T12:00:00Z'),
+    });
+
+    expect(user.events.map(({ id }) => id)).not.toContain('fibre');
+    expect(user.events.map(({ id }) => id)).toContain('arc');
+    expect(wallpaper.events.map(({ name }) => name)).not.toContain('fibre-bundle-topup');
   });
 
   it('keeps the linked command compatibility API returning a string', async () => {
@@ -677,7 +719,7 @@ describe('Telegram commands', () => {
       fetchMock.mock.calls.slice(1).map(([, init]) => JSON.parse(String(init.body)).text),
     ).toEqual(
       Array(4).fill(
-        '<b>Choose an event to edit</b>\nUse <code>/edit</code>, or <code>/edit NUMBER</code> from <code>/events</code>.',
+        '<b>Choose a manual event to edit</b>\nUse a row number from <code>/events</code>, or its M reference. Google events are managed in the control panel.',
       ),
     );
   });
@@ -1203,7 +1245,9 @@ describe('Telegram commands', () => {
     expect(deliveryBody(0).text).toContain(
       '4. <b>Next year</b>\n    Sat, 2 Jan 2027 · Manual · <code>M4</code>',
     );
-    expect(deliveryBody(0).text).toContain('Manual: <code>/edit</code>');
+    expect(deliveryBody(0).text).toContain(
+      'Manual: <code>/edit ROW</code> · <code>/delete ROW</code>',
+    );
     expect(deliveryBody(0).text).not.toContain('Google selections');
   });
 
