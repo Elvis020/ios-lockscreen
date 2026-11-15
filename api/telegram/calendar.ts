@@ -1,9 +1,8 @@
 import { apiErrorResponse, jsonResponse } from '../../lib/http';
 import { getRedis } from '../../lib/redis';
 import { commitIfLeasesOwned, deleteRedisKeyIfValue } from '../../lib/redisLock';
-import { escapeTelegramHtml, sendTelegramMessage } from '../../lib/telegramBot';
+import { draftReply, sendTelegramMessage } from '../../lib/telegramBot';
 import {
-  formatTelegramEventDate,
   getTelegramDraft,
   updateTelegramDraftDate,
   updateTelegramDraftName,
@@ -157,44 +156,12 @@ export default async function handler(req: Request): Promise<Response> {
         return jsonResponse({ error: 'Event draft expired' }, 409);
       }
 
-      const prefix = `ev:${updated.id}:${updated.revision}:`;
-      const editing = updated.operation === 'edit';
+      const reply = draftReply(updated, new URL(req.url).origin);
 
-      await sendTelegramMessage(
-        updated.chatId,
-        [
-          `<b>${editing ? 'Review changes' : 'Save this event?'}</b>`,
-          `Event: <b>${escapeTelegramHtml(updated.name)}</b>`,
-          `Date: <b>${escapeTelegramHtml(formatTelegramEventDate(updated.date!))}</b>`,
-        ].join('\n'),
-        {
-          parseMode: 'HTML',
-          replyMarkup: {
-            inline_keyboard: [
-              [
-                {
-                  text: editing ? 'Save changes' : 'Save event',
-                  callback_data: `${prefix}save`,
-                },
-              ],
-              ...(editing
-                ? [
-                    [
-                      {
-                        text: 'Change name',
-                        web_app: {
-                          url: `${new URL(req.url).origin}/api/telegram/calendar?draft=${encodeURIComponent(updated.id)}&field=name`,
-                        },
-                      },
-                    ],
-                  ]
-                : []),
-              [{ text: 'Change date', callback_data: `${prefix}date` }],
-              [{ text: 'Cancel', callback_data: `${prefix}cancel` }],
-            ],
-          },
-        },
-      );
+      await sendTelegramMessage(updated.chatId, reply.text, {
+        parseMode: reply.parseMode,
+        replyMarkup: reply.replyMarkup,
+      });
 
       await commitIfLeasesOwned(
         redis,

@@ -2181,7 +2181,7 @@ function createThemeSelector(
   };
 }
 
-function draftReply(draft: TelegramEventDraft, origin: string): TelegramReply {
+export function draftReply(draft: TelegramEventDraft, origin: string): TelegramReply {
   if (!draft.name) {
     return htmlReply('<b>Add an event</b>\nWhat should we call it?');
   }

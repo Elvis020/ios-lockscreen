@@ -279,6 +279,14 @@ describe('Telegram calendar Mini App', () => {
       text: expect.stringContaining('Sunday, 1 November 2026'),
       parse_mode: 'HTML',
     });
+    expect(telegramDeliveryBody().text).toContain('Repeats: <b>Once</b>');
+    const markup = telegramDeliveryBody().reply_markup as {
+      inline_keyboard: Array<Array<{ text: string }>>;
+    };
+
+    expect(markup.inline_keyboard.flat().map(({ text }) => text)).toEqual(
+      expect.arrayContaining(['Save event', 'Once', 'Weekly', 'Monthly', 'Yearly']),
+    );
   });
 
   it('rejects invalid input and a signed but unlinked Telegram identity', async () => {
